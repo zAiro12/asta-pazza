@@ -59,7 +59,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   }
 
   if (!caller.isHost) {
-    return NextResponse.json({ error: 'Solo l'host può selezionare le categorie' }, { status: 403 });
+    return NextResponse.json({ error: "Solo l'host può selezionare le categorie" }, { status: 403 });
   }
 
   // Verifica che tutte le categorie esistano
