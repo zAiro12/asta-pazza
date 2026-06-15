@@ -13,20 +13,15 @@ interface Player {
 function getSessionKey(code: string) {
   return `asta-player-${code}`;
 }
-
 function saveSession(code: string, player: Player) {
   localStorage.setItem(getSessionKey(code), JSON.stringify(player));
 }
-
 function loadSession(code: string): Player | null {
   try {
     const raw = localStorage.getItem(getSessionKey(code));
     return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
-
 function clearSession(code: string) {
   localStorage.removeItem(getSessionKey(code));
 }
@@ -49,14 +44,12 @@ export default function LobbyPage() {
 
   useEffect(() => {
     if (autoJoinCalled.current) return;
-
     const session = loadSession(code);
     if (session) {
       autoJoinCalled.current = true;
       rejoinGame(session);
       return;
     }
-
     const nameFromUrl = searchParams.get('name');
     if (nameFromUrl) {
       autoJoinCalled.current = true;
@@ -67,16 +60,12 @@ export default function LobbyPage() {
 
   useEffect(() => {
     if (!joined) return;
-
     const pusher = getPusherClient();
     const channel = pusher.subscribe(`game-${code}`);
 
-    channel.bind('player-joined', (data: { players: Player[] }) => {
-      setPlayers(data.players);
-    });
+    channel.bind('player-joined', (data: { players: Player[] }) => setPlayers(data.players));
     channel.bind('player-left', (data: { players: Player[] }) => {
       setPlayers(data.players);
-      // Aggiorna isHost se sono diventato host
       setMyPlayer(prev => {
         if (!prev) return prev;
         const updated = data.players.find(p => p.id === prev.id);
@@ -84,41 +73,26 @@ export default function LobbyPage() {
         return updated ?? prev;
       });
     });
-    channel.bind('game-started', () => {
-      router.push(`/game/${code}`);
-    });
-    channel.bind('game-deleted', () => {
-      clearSession(code);
-      router.push('/');
-    });
+    channel.bind('game-started', () => router.push(`/game/${code}`));
+    channel.bind('game-deleted', () => { clearSession(code); router.push('/'); });
 
-    return () => {
-      channel.unbind_all();
-      pusher.unsubscribe(`game-${code}`);
-    };
+    return () => { channel.unbind_all(); pusher.unsubscribe(`game-${code}`); };
   }, [joined, code, router]);
 
   async function rejoinGame(session: Player) {
     setLoading(true);
-    const res = await fetch(`/api/lobby/state?code=${code}`);
+    const res = await fetch(`/api/games/${code}`);
     const data = await res.json();
 
     if (!res.ok || data.game?.status !== 'lobby') {
-      if (data.game?.status === 'active') {
-        router.push(`/game/${code}`);
-        return;
-      }
+      if (data.game?.status === 'active') { router.push(`/game/${code}`); return; }
       clearSession(code);
       setLoading(false);
       return;
     }
 
     const stillIn = data.players?.find((p: Player) => p.id === session.id);
-    if (!stillIn) {
-      clearSession(code);
-      setLoading(false);
-      return;
-    }
+    if (!stillIn) { clearSession(code); setLoading(false); return; }
 
     setMyPlayer(stillIn);
     setPlayers(data.players);
@@ -130,18 +104,14 @@ export default function LobbyPage() {
     setLoading(true);
     setError('');
 
-    const res = await fetch('/api/lobby/join', {
+    const res = await fetch(`/api/games/${code}/players`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, playerName: name.trim() }),
+      body: JSON.stringify({ playerName: name.trim() }),
     });
 
     const data = await res.json();
-    if (!res.ok) {
-      setError(data.error);
-      setLoading(false);
-      return;
-    }
+    if (!res.ok) { setError(data.error); setLoading(false); return; }
 
     saveSession(code, data.player);
     setMyPlayer(data.player);
@@ -158,29 +128,21 @@ export default function LobbyPage() {
   async function handleLeave() {
     if (!myPlayer) return;
     clearSession(code);
-    await fetch('/api/lobby/leave', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: myPlayer.id, gameCode: code }),
-    });
+    await fetch(`/api/games/${code}/players/${myPlayer.id}`, { method: 'DELETE' });
     router.push('/');
   }
 
   async function handleStart() {
-    await fetch('/api/lobby/start', {
-      method: 'POST',
+    await fetch(`/api/games/${code}`, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ status: 'active' }),
     });
   }
 
   async function handleShare() {
     const url = `${window.location.origin}/lobby/${code}`;
-    const shareData = {
-      title: 'Asta Pazza',
-      text: `Unisciti alla mia partita! Codice sala: ${code}`,
-      url,
-    };
+    const shareData = { title: 'Asta Pazza', text: `Unisciti alla mia partita! Codice sala: ${code}`, url };
     if (navigator.share && navigator.canShare(shareData)) {
       try { await navigator.share(shareData); } catch { /* annullato */ }
     } else {
@@ -188,9 +150,7 @@ export default function LobbyPage() {
         await navigator.clipboard.writeText(url);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-      } catch {
-        prompt('Copia questo link:', url);
-      }
+      } catch { prompt('Copia questo link:', url); }
     }
   }
 
@@ -208,7 +168,6 @@ export default function LobbyPage() {
         <div className="bg-gray-900 rounded-2xl p-8 w-full max-w-md shadow-xl">
           <h1 className="text-2xl font-bold mb-2">Unisciti alla partita</h1>
           <p className="text-gray-400 mb-6">Codice sala: <span className="font-mono text-yellow-400 text-lg">{code}</span></p>
-
           <input
             type="text"
             placeholder="Il tuo nome"
@@ -219,9 +178,7 @@ export default function LobbyPage() {
             maxLength={20}
             autoFocus
           />
-
           {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
-
           <button
             onClick={handleJoin}
             disabled={loading || !playerName.trim()}
@@ -242,17 +199,10 @@ export default function LobbyPage() {
           <span className="font-mono text-yellow-400 text-xl tracking-widest">{code}</span>
         </div>
 
-        <button
-          onClick={handleShare}
-          className="w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition mb-3 flex items-center justify-center gap-2 text-sm font-medium"
-        >
+        <button onClick={handleShare} className="w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition mb-3 flex items-center justify-center gap-2 text-sm font-medium">
           {copied ? '✅ Link copiato!' : '🔗 Condividi link sala'}
         </button>
-
-        <button
-          onClick={handleLeave}
-          className="w-full bg-transparent border border-red-500 text-red-400 hover:bg-red-500 hover:text-white py-2 rounded-xl transition mb-6 text-sm font-medium"
-        >
+        <button onClick={handleLeave} className="w-full bg-transparent border border-red-500 text-red-400 hover:bg-red-500 hover:text-white py-2 rounded-xl transition mb-6 text-sm font-medium">
           🚪 Esci dalla sala
         </button>
 
@@ -272,17 +222,12 @@ export default function LobbyPage() {
         </ul>
 
         {myPlayer?.isHost && (
-          <button
-            onClick={handleStart}
-            disabled={players.length < 2}
-            className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 disabled:opacity-50 transition"
-          >
+          <button onClick={handleStart} disabled={players.length < 2} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 disabled:opacity-50 transition">
             {players.length < 2 ? 'Aspetta almeno 2 giocatori' : '🎯 Avvia Partita'}
           </button>
         )}
-
         {!myPlayer?.isHost && (
-          <p className="text-center text-gray-500 text-sm">In attesa che l'host avvii la partita...</p>
+          <p className="text-center text-gray-500 text-sm">In attesa che l’host avvii la partita...</p>
         )}
       </div>
     </main>
