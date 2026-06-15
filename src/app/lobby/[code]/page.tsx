@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { getPusherClient } from '@/lib/pusher-client';
 
@@ -24,10 +24,12 @@ export default function LobbyPage() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // Auto-join se arriva da "Crea Partita" con ?name=
+  const autoJoinCalled = useRef(false);
+
   useEffect(() => {
     const nameFromUrl = searchParams.get('name');
-    if (nameFromUrl && !joined) {
+    if (nameFromUrl && !autoJoinCalled.current) {
+      autoJoinCalled.current = true;
       joinGame(nameFromUrl);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -83,7 +85,7 @@ export default function LobbyPage() {
     await joinGame(playerName);
   }
 
-  async function handleStart() {
+    async function handleStart() {
     await fetch('/api/lobby/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
