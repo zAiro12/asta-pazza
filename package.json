@@ -12,11 +12,11 @@
     "db:seed": "tsx db/seed.ts"
   },
   "dependencies": {
-    "next": "15.3.6",
+    "next": "15.5.19",
     "react": "^19",
     "react-dom": "^19",
-    "@neondatabase/serverless": "^0.9.3",
-    "drizzle-orm": "^0.30.10",
+    "@neondatabase/serverless": "^0.10.0",
+    "drizzle-orm": "^0.45.2",
     "pusher": "^5.2.0",
     "pusher-js": "^8.4.0",
     "ws": "^8.17.0",
@@ -29,13 +29,13 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/ws": "^8.5.10",
-    "drizzle-kit": "^0.21.4",
+    "drizzle-kit": "^0.31.10",
     "tsx": "^4.11.0",
     "typescript": "^5",
     "tailwindcss": "^3.4.1",
     "postcss": "^8",
     "autoprefixer": "^10",
     "eslint": "^9",
-    "eslint-config-next": "15.3.6"
+    "eslint-config-next": "15.5.19"
   }
 }
