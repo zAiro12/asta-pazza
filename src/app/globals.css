@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --gold: #F59E0B;
+  --dark-bg: #0F172A;
+  --card-bg: #1E293B;
+}
+
+body {
+  background-color: var(--dark-bg);
+  color: white;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-amber-500 hover:bg-amber-400 text-black font-bold py-2 px-6 rounded-lg transition-colors;
+  }
+
+  .btn-secondary {
+    @apply bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-6 rounded-lg transition-colors;
+  }
+
+  .card {
+    @apply bg-slate-800 rounded-xl border border-slate-700 p-4;
+  }
+
+  .badge-categoria {
+    @apply text-xs font-semibold px-2 py-1 rounded-full bg-slate-700 text-slate-300;
+  }
+}
