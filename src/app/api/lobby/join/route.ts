@@ -36,5 +36,5 @@ export async function POST(request: NextRequest) {
     players: allPlayers,
   });
 
-  return NextResponse.json({ player, game });
+  return NextResponse.json({ player, game, allPlayers });
 }

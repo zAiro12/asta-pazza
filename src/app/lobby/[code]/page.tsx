@@ -65,6 +65,7 @@ export default function LobbyPage() {
     }
 
     setMyPlayer(data.player);
+    setPlayers(data.allPlayers);
     setJoined(true);
     setLoading(false);
   }
@@ -124,7 +125,7 @@ export default function LobbyPage() {
               <span className="w-2 h-2 rounded-full bg-green-400"></span>
               <span className="font-medium">{p.name}</span>
               {p.isHost && <span className="ml-auto text-xs text-yellow-400 font-semibold">HOST</span>}
-              {p.id === myPlayer?.id && <span className="ml-auto text-xs text-gray-400">(tu)</span>}
+              {p.id === myPlayer?.id && !p.isHost && <span className="ml-auto text-xs text-gray-400">(tu)</span>}
             </li>
           ))}
         </ul>
@@ -140,7 +141,7 @@ export default function LobbyPage() {
         )}
 
         {!myPlayer?.isHost && (
-          <p className="text-center text-gray-500 text-sm">In attesa che l'host avvii la partita...</p>
+          <p className="text-center text-gray-500 text-sm">In attesa che l’host avvii la partita...</p>
         )}
       </div>
     </main>
