@@ -1,12 +1,44 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function Home() {
+  const router = useRouter();
   const [view, setView] = useState<'home' | 'create' | 'join'>('home');
+  const [hostName, setHostName] = useState('');
+  const [joinCode, setJoinCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleCreate() {
+    if (!hostName.trim()) return;
+    setLoading(true);
+    setError('');
+
+    const res = await fetch('/api/games/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hostName: hostName.trim() }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error);
+      setLoading(false);
+      return;
+    }
+
+    router.push(`/lobby/${data.code}?host=1&name=${encodeURIComponent(hostName.trim())}`);
+  }
+
+  async function handleJoin() {
+    if (!joinCode.trim()) return;
+    router.push(`/lobby/${joinCode.trim().toUpperCase()}`);
+  }
 
   return (
-    <main className="flex flex-col items-center justify-center min-h-screen gap-8 p-4">
+    <main className="flex flex-col items-center justify-center min-h-screen gap-8 p-4 bg-gray-950 text-white">
       <div className="text-center">
         <h1 className="text-6xl font-black text-amber-400 mb-2">🃏 Asta Pazza</h1>
         <p className="text-slate-400 text-lg">Gioco di aste al buio in tempo reale</p>
@@ -14,30 +46,78 @@ export default function Home() {
 
       {view === 'home' && (
         <div className="flex flex-col gap-4 w-full max-w-xs">
-          <button className="btn-primary text-lg py-4" onClick={() => setView('create')}>
+          <button
+            className="bg-yellow-400 text-gray-950 font-bold text-lg py-4 rounded-xl hover:bg-yellow-300 transition"
+            onClick={() => { setView('create'); setError(''); }}
+          >
             🎮 Crea Partita
           </button>
-          <button className="btn-secondary text-lg py-4" onClick={() => setView('join')}>
+          <button
+            className="bg-gray-800 text-white font-bold text-lg py-4 rounded-xl hover:bg-gray-700 transition"
+            onClick={() => { setView('join'); setError(''); }}
+          >
             🔗 Unisciti a una Partita
           </button>
         </div>
       )}
 
       {view === 'create' && (
-        <div className="card w-full max-w-sm">
-          <h2 className="text-xl font-bold mb-4">Nuova Partita</h2>
-          <p className="text-slate-400 text-sm">Configurazione partita — in sviluppo</p>
-          <button className="btn-secondary mt-4 w-full" onClick={() => setView('home')}>
+        <div className="bg-gray-900 rounded-2xl p-8 w-full max-w-sm shadow-xl">
+          <h2 className="text-xl font-bold mb-6">Nuova Partita</h2>
+
+          <input
+            type="text"
+            placeholder="Il tuo nome (host)"
+            value={hostName}
+            onChange={e => setHostName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleCreate()}
+            className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 mb-4 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            maxLength={20}
+          />
+
+          {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+
+          <button
+            onClick={handleCreate}
+            disabled={loading || !hostName.trim()}
+            className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 disabled:opacity-50 transition mb-3"
+          >
+            {loading ? 'Creando...' : '🚀 Crea e Entra'}
+          </button>
+          <button
+            className="w-full bg-gray-800 text-white py-3 rounded-xl hover:bg-gray-700 transition"
+            onClick={() => setView('home')}
+          >
             ← Indietro
           </button>
         </div>
       )}
 
       {view === 'join' && (
-        <div className="card w-full max-w-sm">
-          <h2 className="text-xl font-bold mb-4">Unisciti</h2>
-          <p className="text-slate-400 text-sm">Inserisci codice sala — in sviluppo</p>
-          <button className="btn-secondary mt-4 w-full" onClick={() => setView('home')}>
+        <div className="bg-gray-900 rounded-2xl p-8 w-full max-w-sm shadow-xl">
+          <h2 className="text-xl font-bold mb-6">Unisciti a una Partita</h2>
+
+          <input
+            type="text"
+            placeholder="Codice sala (es. XKQZ)"
+            value={joinCode}
+            onChange={e => setJoinCode(e.target.value.toUpperCase())}
+            onKeyDown={e => e.key === 'Enter' && handleJoin()}
+            className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 mb-4 focus:outline-none focus:ring-2 focus:ring-yellow-400 font-mono tracking-widest"
+            maxLength={6}
+          />
+
+          <button
+            onClick={handleJoin}
+            disabled={!joinCode.trim()}
+            className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 disabled:opacity-50 transition mb-3"
+          >
+            Entra
+          </button>
+          <button
+            className="w-full bg-gray-800 text-white py-3 rounded-xl hover:bg-gray-700 transition"
+            onClick={() => setView('home')}
+          >
             ← Indietro
           </button>
         </div>
