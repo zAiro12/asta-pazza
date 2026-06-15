@@ -50,8 +50,6 @@ export default function LobbyPage() {
   const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [totalTurns, setTotalTurns] = useState<number>(0);
-  const [savingCategories, setSavingCategories] = useState(false);
-  const [categoriesSaved, setCategoriesSaved] = useState(false);
 
   const autoJoinCalled = useRef(false);
 
@@ -66,7 +64,6 @@ export default function LobbyPage() {
       .then(r => r.json())
       .then((data: Category[]) => {
         setAllCategories(data);
-        // Seleziona tutte di default (solo se non ci sono ancora categorie salvate)
         setSelectedCategoryIds(prev =>
           prev.length === 0 ? data.map(c => c.id) : prev
         );
@@ -83,7 +80,6 @@ export default function LobbyPage() {
         if (data.selectedCategories?.length > 0) {
           setSelectedCategoryIds(data.selectedCategories.map((c: Category) => c.id));
           setTotalTurns(data.totalTurns ?? 0);
-          setCategoriesSaved(true);
         }
       })
       .catch(() => {});
@@ -125,7 +121,6 @@ export default function LobbyPage() {
     channel.bind('categories-selected', (data: { selectedCategoryIds: number[]; totalTurns: number }) => {
       setSelectedCategoryIds(data.selectedCategoryIds);
       setTotalTurns(data.totalTurns);
-      setCategoriesSaved(true);
     });
 
     return () => { channel.unbind_all(); pusher.unsubscribe(`game-${code}`); };
@@ -185,10 +180,24 @@ export default function LobbyPage() {
   }
 
   async function handleStart() {
+    if (!myPlayer?.isHost) return;
     if (selectedCategoryIds.length === 0) {
       alert('Seleziona almeno una categoria prima di avviare la partita!');
       return;
     }
+
+    // Salva le categorie e avvia in sequenza
+    const resCat = await fetch(`/api/games/${code}/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: myPlayer.id, selectedCategoryIds }),
+    });
+    if (!resCat.ok) {
+      const d = await resCat.json();
+      alert(d.error ?? 'Errore nel salvare le categorie');
+      return;
+    }
+
     await fetch(`/api/games/${code}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -196,34 +205,11 @@ export default function LobbyPage() {
     });
   }
 
-  async function handleSaveCategories() {
-    if (!myPlayer?.isHost) return;
-    if (selectedCategoryIds.length === 0) {
-      alert('Seleziona almeno una categoria!');
-      return;
-    }
-    setSavingCategories(true);
-    const res = await fetch(`/api/games/${code}/categories`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: myPlayer.id, selectedCategoryIds }),
-    });
-    const data = await res.json();
-    setSavingCategories(false);
-    if (!res.ok) {
-      alert(data.error ?? 'Errore nel salvare le categorie');
-      return;
-    }
-    setTotalTurns(data.totalTurns);
-    setCategoriesSaved(true);
-  }
-
   function toggleCategory(id: number) {
     if (!myPlayer?.isHost) return;
     setSelectedCategoryIds(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     );
-    setCategoriesSaved(false);
   }
 
   async function handleShare() {
@@ -290,10 +276,10 @@ export default function LobbyPage() {
         {/* Azioni rapide */}
         <div className="space-y-2">
           <button onClick={handleShare} className="w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition flex items-center justify-center gap-2 text-sm font-medium">
-            {copied ? '\u2705 Link copiato!' : '\ud83d\udd17 Condividi link sala'}
+            {copied ? '✅ Link copiato!' : '🔗 Condividi link sala'}
           </button>
           <button onClick={handleLeave} className="w-full bg-transparent border border-red-500 text-red-400 hover:bg-red-500 hover:text-white py-2 rounded-xl transition text-sm font-medium">
-            \ud83d\udeaa Esci dalla sala
+            🚪 Esci dalla sala
           </button>
         </div>
 
@@ -314,18 +300,13 @@ export default function LobbyPage() {
           </ul>
         </div>
 
-        {/* Selezione categorie - visibile solo all host */}
+        {/* Selezione categorie — solo host */}
         {myPlayer?.isHost && (
           <div className="bg-gray-800 rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-sm text-gray-300">\ud83d\uddc2 Categorie di gioco</h2>
-              {/* Contatore live beni selezionati */}
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                categoriesSaved
-                  ? 'bg-green-500/20 text-green-400'
-                  : 'bg-yellow-500/20 text-yellow-400'
-              }`}>
-                {liveItemCount} beni{categoriesSaved ? ' \u2713' : ''}
+              <h2 className="font-semibold text-sm text-gray-300">🗂 Categorie di gioco</h2>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400">
+                {liveItemCount} beni · {selectedCategoryIds.length} cat.
               </span>
             </div>
 
@@ -343,32 +324,19 @@ export default function LobbyPage() {
                         : 'bg-gray-700 text-gray-300 border-gray-600 hover:border-yellow-400'
                     }`}
                   >
-                    <span className="block truncate">{selectedCategoryIds.includes(cat.id) ? '\u2713 ' : ''}{cat.name}</span>
+                    <span className="block truncate">{selectedCategoryIds.includes(cat.id) ? '✓ ' : ''}{cat.name}</span>
                     <span className="block text-xs opacity-60 mt-0.5">{cat.itemCount} beni</span>
                   </button>
                 ))}
               </div>
             )}
-
-            {/* Bottone conferma */}
-            <button
-              onClick={handleSaveCategories}
-              disabled={savingCategories || selectedCategoryIds.length === 0}
-              className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold py-2 rounded-lg text-sm transition"
-            >
-              {savingCategories
-                ? 'Salvataggio...'
-                : categoriesSaved
-                ? `\u2705 Confermati (${liveItemCount} beni \u00b7 ${selectedCategoryIds.length} cat.) \u2014 riconferma per modificare`
-                : `\ud83d\udcbe Conferma ${selectedCategoryIds.length} categorie \u00b7 ${liveItemCount} beni`}
-            </button>
           </div>
         )}
 
         {/* Info per i non-host */}
-        {!myPlayer?.isHost && categoriesSaved && totalTurns > 0 && (
+        {!myPlayer?.isHost && totalTurns > 0 && (
           <div className="bg-gray-800 rounded-xl px-4 py-3 text-sm text-gray-400">
-            \ud83d\uddc2 Categorie configurate \u00b7 <span className="text-white font-medium">{totalTurns} beni in gioco</span>
+            🗂 Categorie configurate · <span className="text-white font-medium">{totalTurns} beni in gioco</span>
           </div>
         )}
 
@@ -376,17 +344,17 @@ export default function LobbyPage() {
         {myPlayer?.isHost ? (
           <button
             onClick={handleStart}
-            disabled={players.length < 2 || selectedCategoryIds.length === 0 || !categoriesSaved}
+            disabled={players.length < 2 || selectedCategoryIds.length === 0}
             className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 disabled:opacity-50 transition"
           >
             {players.length < 2
               ? 'Aspetta almeno 2 giocatori'
-              : selectedCategoryIds.length === 0 || !categoriesSaved
-              ? 'Seleziona e conferma le categorie'
-              : '\ud83c\udfaf Avvia Partita'}
+              : selectedCategoryIds.length === 0
+              ? 'Seleziona almeno una categoria'
+              : `🎯 Avvia Partita · ${liveItemCount} beni`}
           </button>
         ) : (
-          <p className="text-center text-gray-500 text-sm">In attesa che l\'host avvii la partita...</p>
+          <p className="text-center text-gray-500 text-sm">In attesa che l&apos;host avvii la partita...</p>
         )}
 
       </div>
