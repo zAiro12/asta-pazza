@@ -19,12 +19,15 @@ export async function POST(request: NextRequest) {
   if (!game) {
     return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
   }
-  if (game.status !== 'waiting') {
-    return NextResponse.json({ error: 'La partita è già iniziata' }, { status: 400 });
+  if (game.status !== 'lobby') {
+    return NextResponse.json({ error: 'La partita \u00e8 gi\u00e0 iniziata' }, { status: 400 });
   }
 
+  const existingPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
+  const isHost = existingPlayers.length === 0;
+
   const [player] = await db.insert(players)
-    .values({ gameId: game.id, name: playerName })
+    .values({ gameId: game.id, name: playerName, isHost })
     .returning();
 
   const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
