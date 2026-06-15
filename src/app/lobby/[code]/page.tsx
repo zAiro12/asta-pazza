@@ -10,6 +10,11 @@ interface Player {
   isHost: boolean;
 }
 
+interface Category {
+  id: number;
+  name: string;
+}
+
 function getSessionKey(code: string) {
   return `asta-player-${code}`;
 }
@@ -40,7 +45,37 @@ export default function LobbyPage() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
+  // Categorie
+  const [allCategories, setAllCategories] = useState<Category[]>([]);
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
+  const [totalTurns, setTotalTurns] = useState<number>(0);
+  const [savingCategories, setSavingCategories] = useState(false);
+  const [categoriesSaved, setCategoriesSaved] = useState(false);
+
   const autoJoinCalled = useRef(false);
+
+  // Carica tutte le categorie disponibili
+  useEffect(() => {
+    fetch('/api/categories')
+      .then(r => r.json())
+      .then((data: Category[]) => setAllCategories(data))
+      .catch(() => {});
+  }, []);
+
+  // Carica categorie già selezionate per questa partita
+  useEffect(() => {
+    if (!joined) return;
+    fetch(`/api/games/${code}/categories`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.selectedCategories?.length > 0) {
+          setSelectedCategoryIds(data.selectedCategories.map((c: Category) => c.id));
+          setTotalTurns(data.totalTurns ?? 0);
+          setCategoriesSaved(true);
+        }
+      })
+      .catch(() => {});
+  }, [joined, code]);
 
   useEffect(() => {
     if (autoJoinCalled.current) return;
@@ -75,6 +110,11 @@ export default function LobbyPage() {
     });
     channel.bind('game-started', () => router.push(`/game/${code}`));
     channel.bind('game-deleted', () => { clearSession(code); router.push('/'); });
+    channel.bind('categories-selected', (data: { selectedCategoryIds: number[]; totalTurns: number }) => {
+      setSelectedCategoryIds(data.selectedCategoryIds);
+      setTotalTurns(data.totalTurns);
+      setCategoriesSaved(true);
+    });
 
     return () => { channel.unbind_all(); pusher.unsubscribe(`game-${code}`); };
   }, [joined, code, router]);
@@ -133,11 +173,45 @@ export default function LobbyPage() {
   }
 
   async function handleStart() {
+    if (selectedCategoryIds.length === 0) {
+      alert('Seleziona almeno una categoria prima di avviare la partita!');
+      return;
+    }
     await fetch(`/api/games/${code}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'active' }),
     });
+  }
+
+  async function handleSaveCategories() {
+    if (!myPlayer?.isHost) return;
+    if (selectedCategoryIds.length === 0) {
+      alert('Seleziona almeno una categoria!');
+      return;
+    }
+    setSavingCategories(true);
+    const res = await fetch(`/api/games/${code}/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: myPlayer.id, selectedCategoryIds }),
+    });
+    const data = await res.json();
+    setSavingCategories(false);
+    if (!res.ok) {
+      alert(data.error ?? 'Errore nel salvare le categorie');
+      return;
+    }
+    setTotalTurns(data.totalTurns);
+    setCategoriesSaved(true);
+  }
+
+  function toggleCategory(id: number) {
+    if (!myPlayer?.isHost) return;
+    setSelectedCategoryIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+    setCategoriesSaved(false);
   }
 
   async function handleShare() {
@@ -193,42 +267,105 @@ export default function LobbyPage() {
 
   return (
     <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-4">
-      <div className="bg-gray-900 rounded-2xl p-8 w-full max-w-md shadow-xl">
-        <div className="flex items-center justify-between mb-6">
+      <div className="bg-gray-900 rounded-2xl p-8 w-full max-w-md shadow-xl space-y-6">
+
+        {/* Header */}
+        <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">Lobby</h1>
           <span className="font-mono text-yellow-400 text-xl tracking-widest">{code}</span>
         </div>
 
-        <button onClick={handleShare} className="w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition mb-3 flex items-center justify-center gap-2 text-sm font-medium">
-          {copied ? '✅ Link copiato!' : '🔗 Condividi link sala'}
-        </button>
-        <button onClick={handleLeave} className="w-full bg-transparent border border-red-500 text-red-400 hover:bg-red-500 hover:text-white py-2 rounded-xl transition mb-6 text-sm font-medium">
-          🚪 Esci dalla sala
-        </button>
-
-        <p className="text-gray-400 text-sm mb-4">
-          {players.length} giocatore{players.length !== 1 ? 'i' : ''} connesso{players.length !== 1 ? 'i' : ''}
-        </p>
-
-        <ul className="space-y-2 mb-8">
-          {players.map((p) => (
-            <li key={p.id} className="flex items-center gap-3 bg-gray-800 rounded-xl px-4 py-3">
-              <span className="w-2 h-2 rounded-full bg-green-400"></span>
-              <span className="font-medium">{p.name}</span>
-              {p.isHost && <span className="ml-auto text-xs text-yellow-400 font-semibold">HOST</span>}
-              {p.id === myPlayer?.id && !p.isHost && <span className="ml-auto text-xs text-gray-400">(tu)</span>}
-            </li>
-          ))}
-        </ul>
-
-        {myPlayer?.isHost && (
-          <button onClick={handleStart} disabled={players.length < 2} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 disabled:opacity-50 transition">
-            {players.length < 2 ? 'Aspetta almeno 2 giocatori' : '🎯 Avvia Partita'}
+        {/* Azioni rapide */}
+        <div className="space-y-2">
+          <button onClick={handleShare} className="w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition flex items-center justify-center gap-2 text-sm font-medium">
+            {copied ? '✅ Link copiato!' : '🔗 Condividi link sala'}
           </button>
+          <button onClick={handleLeave} className="w-full bg-transparent border border-red-500 text-red-400 hover:bg-red-500 hover:text-white py-2 rounded-xl transition text-sm font-medium">
+            🚪 Esci dalla sala
+          </button>
+        </div>
+
+        {/* Giocatori */}
+        <div>
+          <p className="text-gray-400 text-sm mb-3">
+            {players.length} giocatore{players.length !== 1 ? 'i' : ''} connesso{players.length !== 1 ? 'i' : ''}
+          </p>
+          <ul className="space-y-2">
+            {players.map((p) => (
+              <li key={p.id} className="flex items-center gap-3 bg-gray-800 rounded-xl px-4 py-3">
+                <span className="w-2 h-2 rounded-full bg-green-400"></span>
+                <span className="font-medium">{p.name}</span>
+                {p.isHost && <span className="ml-auto text-xs text-yellow-400 font-semibold">HOST</span>}
+                {p.id === myPlayer?.id && !p.isHost && <span className="ml-auto text-xs text-gray-400">(tu)</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Selezione categorie — visibile solo all'host */}
+        {myPlayer?.isHost && (
+          <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sm text-gray-300">🗂 Categorie di gioco</h2>
+              {categoriesSaved && totalTurns > 0 && (
+                <span className="text-xs text-green-400 font-medium">✅ {totalTurns} beni · {totalTurns} turni</span>
+              )}
+            </div>
+
+            {allCategories.length === 0 ? (
+              <p className="text-gray-500 text-xs">Caricamento categorie...</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {allCategories.map(cat => (
+                  <button
+                    key={cat.id}
+                    onClick={() => toggleCategory(cat.id)}
+                    className={`text-left px-3 py-2 rounded-lg text-sm font-medium transition border ${
+                      selectedCategoryIds.includes(cat.id)
+                        ? 'bg-yellow-400 text-gray-950 border-yellow-400'
+                        : 'bg-gray-700 text-gray-300 border-gray-600 hover:border-yellow-400'
+                    }`}
+                  >
+                    {selectedCategoryIds.includes(cat.id) ? '✓ ' : ''}{cat.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <button
+              onClick={handleSaveCategories}
+              disabled={savingCategories || selectedCategoryIds.length === 0}
+              className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold py-2 rounded-lg text-sm transition"
+            >
+              {savingCategories ? 'Salvataggio...' : `💾 Conferma categorie (${selectedCategoryIds.length} selezionate)`}
+            </button>
+          </div>
         )}
-        {!myPlayer?.isHost && (
-          <p className="text-center text-gray-500 text-sm">In attesa che l’host avvii la partita...</p>
+
+        {/* Info categorie per i giocatori non-host */}
+        {!myPlayer?.isHost && categoriesSaved && totalTurns > 0 && (
+          <div className="bg-gray-800 rounded-xl px-4 py-3 text-sm text-gray-400">
+            🗂 Categorie configurate · <span className="text-white font-medium">{totalTurns} beni in gioco</span>
+          </div>
         )}
+
+        {/* Avvia / attendi */}
+        {myPlayer?.isHost ? (
+          <button
+            onClick={handleStart}
+            disabled={players.length < 2 || selectedCategoryIds.length === 0 || !categoriesSaved}
+            className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 disabled:opacity-50 transition"
+          >
+            {players.length < 2
+              ? 'Aspetta almeno 2 giocatori'
+              : selectedCategoryIds.length === 0 || !categoriesSaved
+              ? 'Seleziona e conferma le categorie'
+              : '🎯 Avvia Partita'}
+          </button>
+        ) : (
+          <p className="text-center text-gray-500 text-sm">In attesa che l'host avvii la partita...</p>
+        )}
+
       </div>
     </main>
   );
