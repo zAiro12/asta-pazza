@@ -42,9 +42,10 @@ export default function LobbyPage() {
   const [myPlayer, setMyPlayer] = useState<Player | null>(null);
   const [playerName, setPlayerName] = useState('');
   const [joined, setJoined] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // parte true: stiamo verificando la sala
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [gameNotFound, setGameNotFound] = useState(false);
 
   // Categorie
   const [allCategories, setAllCategories] = useState<Category[]>([]);
@@ -53,12 +54,12 @@ export default function LobbyPage() {
 
   const autoJoinCalled = useRef(false);
 
-  // Beni selezionati live (calcolato client-side)
+  // Beni selezionati live
   const liveItemCount = allCategories
     .filter(c => selectedCategoryIds.includes(c.id))
     .reduce((acc, c) => acc + c.itemCount, 0);
 
-  // Carica tutte le categorie con itemCount; seleziona tutto di default
+  // Carica categorie con itemCount; seleziona tutto di default
   useEffect(() => {
     fetch('/api/categories')
       .then(r => r.json())
@@ -71,7 +72,7 @@ export default function LobbyPage() {
       .catch(() => {});
   }, []);
 
-  // Carica categorie gia salvate per questa partita (rejoin)
+  // Carica categorie già salvate per questa partita (rejoin)
   useEffect(() => {
     if (!joined) return;
     fetch(`/api/games/${code}/categories`)
@@ -85,19 +86,52 @@ export default function LobbyPage() {
       .catch(() => {});
   }, [joined, code]);
 
+  // Verifica esistenza sala + eventuale auto-join
   useEffect(() => {
     if (autoJoinCalled.current) return;
-    const session = loadSession(code);
-    if (session) {
-      autoJoinCalled.current = true;
-      rejoinGame(session);
-      return;
+
+    async function init() {
+      // Controlla se la sala esiste
+      const res = await fetch(`/api/games/${code}`);
+      if (!res.ok) {
+        setGameNotFound(true);
+        setLoading(false);
+        return;
+      }
+      const data = await res.json();
+      if (!data.game) {
+        setGameNotFound(true);
+        setLoading(false);
+        return;
+      }
+      if (data.game.status === 'active') {
+        // Partita già iniziata
+        const session = loadSession(code);
+        if (session) { router.push(`/game/${code}`); return; }
+        setGameNotFound(true); // non puoi entrare a partita avviata
+        setLoading(false);
+        return;
+      }
+
+      // Sala valida in lobby
+      const session = loadSession(code);
+      if (session) {
+        autoJoinCalled.current = true;
+        await rejoinGame(session);
+        return;
+      }
+      const nameFromUrl = searchParams.get('name');
+      if (nameFromUrl) {
+        autoJoinCalled.current = true;
+        await joinGame(nameFromUrl);
+        return;
+      }
+
+      // Nessun auto-join: mostra il form
+      setLoading(false);
     }
-    const nameFromUrl = searchParams.get('name');
-    if (nameFromUrl) {
-      autoJoinCalled.current = true;
-      joinGame(nameFromUrl);
-    }
+
+    init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -185,8 +219,6 @@ export default function LobbyPage() {
       alert('Seleziona almeno una categoria prima di avviare la partita!');
       return;
     }
-
-    // Salva le categorie e avvia in sequenza
     const resCat = await fetch(`/api/games/${code}/categories`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -197,7 +229,6 @@ export default function LobbyPage() {
       alert(d.error ?? 'Errore nel salvare le categorie');
       return;
     }
-
     await fetch(`/api/games/${code}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -226,10 +257,32 @@ export default function LobbyPage() {
     }
   }
 
+  // --- Schermate ---
+
   if (loading) {
     return (
       <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
         <p className="text-gray-400 animate-pulse">Caricamento...</p>
+      </main>
+    );
+  }
+
+  if (gameNotFound) {
+    return (
+      <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-4">
+        <div className="bg-gray-900 rounded-2xl p-8 w-full max-w-md shadow-xl text-center space-y-4">
+          <p className="text-5xl">❌</p>
+          <h1 className="text-2xl font-bold">Sala non trovata</h1>
+          <p className="text-gray-400 text-sm">
+            Il codice <span className="font-mono text-yellow-400">{code}</span> non corrisponde a nessuna partita attiva.
+          </p>
+          <button
+            onClick={() => router.push('/')}
+            className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 transition"
+          >
+            Torna alla home
+          </button>
+        </div>
       </main>
     );
   }
