@@ -16,7 +16,7 @@ export default function Home() {
     setLoading(true);
     setError('');
 
-    const res = await fetch('/api/games/create', {
+    const res = await fetch('/api/games', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hostName: hostName.trim() }),
@@ -29,7 +29,11 @@ export default function Home() {
       return;
     }
 
-    router.push(`/lobby/${data.code}?host=1&name=${encodeURIComponent(hostName.trim())}`);
+    // Salva sessione in localStorage prima del redirect
+    const code = data.game.code;
+    localStorage.setItem(`asta-player-${code}`, JSON.stringify(data.player));
+
+    router.push(`/lobby/${code}`);
   }
 
   async function handleJoin() {
