@@ -27,6 +27,10 @@ function loadSession(code: string): Player | null {
   }
 }
 
+function clearSession(code: string) {
+  localStorage.removeItem(getSessionKey(code));
+}
+
 export default function LobbyPage() {
   const params = useParams();
   const router = useRouter();
@@ -46,7 +50,6 @@ export default function LobbyPage() {
   useEffect(() => {
     if (autoJoinCalled.current) return;
 
-    // 1. Prova a ripristinare sessione salvata
     const session = loadSession(code);
     if (session) {
       autoJoinCalled.current = true;
@@ -54,7 +57,6 @@ export default function LobbyPage() {
       return;
     }
 
-    // 2. Auto-join da URL (?name=) quando si crea la partita
     const nameFromUrl = searchParams.get('name');
     if (nameFromUrl) {
       autoJoinCalled.current = true;
@@ -74,9 +76,20 @@ export default function LobbyPage() {
     });
     channel.bind('player-left', (data: { players: Player[] }) => {
       setPlayers(data.players);
+      // Aggiorna isHost se sono diventato host
+      setMyPlayer(prev => {
+        if (!prev) return prev;
+        const updated = data.players.find(p => p.id === prev.id);
+        if (updated) saveSession(code, updated);
+        return updated ?? prev;
+      });
     });
     channel.bind('game-started', () => {
       router.push(`/game/${code}`);
+    });
+    channel.bind('game-deleted', () => {
+      clearSession(code);
+      router.push('/');
     });
 
     return () => {
@@ -85,33 +98,29 @@ export default function LobbyPage() {
     };
   }, [joined, code, router]);
 
-  // Ripristina sessione esistente senza creare nuovo profilo
   async function rejoinGame(session: Player) {
     setLoading(true);
-
     const res = await fetch(`/api/lobby/state?code=${code}`);
     const data = await res.json();
 
     if (!res.ok || data.game?.status !== 'lobby') {
-      // Partita non trovata o già iniziata — redirect appropriato
       if (data.game?.status === 'active') {
         router.push(`/game/${code}`);
         return;
       }
-      localStorage.removeItem(getSessionKey(code));
+      clearSession(code);
       setLoading(false);
       return;
     }
 
-    // Controlla che il giocatore esista ancora nel DB
     const stillIn = data.players?.find((p: Player) => p.id === session.id);
     if (!stillIn) {
-      localStorage.removeItem(getSessionKey(code));
+      clearSession(code);
       setLoading(false);
       return;
     }
 
-    setMyPlayer(session);
+    setMyPlayer(stillIn);
     setPlayers(data.players);
     setJoined(true);
     setLoading(false);
@@ -144,6 +153,17 @@ export default function LobbyPage() {
   async function handleJoin() {
     if (!playerName.trim()) return;
     await joinGame(playerName);
+  }
+
+  async function handleLeave() {
+    if (!myPlayer) return;
+    clearSession(code);
+    await fetch('/api/lobby/leave', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: myPlayer.id, gameCode: code }),
+    });
+    router.push('/');
   }
 
   async function handleStart() {
@@ -224,9 +244,16 @@ export default function LobbyPage() {
 
         <button
           onClick={handleShare}
-          className="w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition mb-6 flex items-center justify-center gap-2 text-sm font-medium"
+          className="w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition mb-3 flex items-center justify-center gap-2 text-sm font-medium"
         >
           {copied ? '✅ Link copiato!' : '🔗 Condividi link sala'}
+        </button>
+
+        <button
+          onClick={handleLeave}
+          className="w-full bg-transparent border border-red-500 text-red-400 hover:bg-red-500 hover:text-white py-2 rounded-xl transition mb-6 text-sm font-medium"
+        >
+          🚪 Esci dalla sala
         </button>
 
         <p className="text-gray-400 text-sm mb-4">
@@ -255,7 +282,7 @@ export default function LobbyPage() {
         )}
 
         {!myPlayer?.isHost && (
-          <p className="text-center text-gray-500 text-sm">In attesa che l’host avvii la partita...</p>
+          <p className="text-center text-gray-500 text-sm">In attesa che l'host avvii la partita...</p>
         )}
       </div>
     </main>
