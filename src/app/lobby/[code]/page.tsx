@@ -10,6 +10,23 @@ interface Player {
   isHost: boolean;
 }
 
+function getSessionKey(code: string) {
+  return `asta-player-${code}`;
+}
+
+function saveSession(code: string, player: Player) {
+  localStorage.setItem(getSessionKey(code), JSON.stringify(player));
+}
+
+function loadSession(code: string): Player | null {
+  try {
+    const raw = localStorage.getItem(getSessionKey(code));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function LobbyPage() {
   const params = useParams();
   const router = useRouter();
@@ -27,8 +44,19 @@ export default function LobbyPage() {
   const autoJoinCalled = useRef(false);
 
   useEffect(() => {
+    if (autoJoinCalled.current) return;
+
+    // 1. Prova a ripristinare sessione salvata
+    const session = loadSession(code);
+    if (session) {
+      autoJoinCalled.current = true;
+      rejoinGame(session);
+      return;
+    }
+
+    // 2. Auto-join da URL (?name=) quando si crea la partita
     const nameFromUrl = searchParams.get('name');
-    if (nameFromUrl && !autoJoinCalled.current) {
+    if (nameFromUrl) {
       autoJoinCalled.current = true;
       joinGame(nameFromUrl);
     }
@@ -57,6 +85,38 @@ export default function LobbyPage() {
     };
   }, [joined, code, router]);
 
+  // Ripristina sessione esistente senza creare nuovo profilo
+  async function rejoinGame(session: Player) {
+    setLoading(true);
+
+    const res = await fetch(`/api/lobby/state?code=${code}`);
+    const data = await res.json();
+
+    if (!res.ok || data.game?.status !== 'lobby') {
+      // Partita non trovata o già iniziata — redirect appropriato
+      if (data.game?.status === 'active') {
+        router.push(`/game/${code}`);
+        return;
+      }
+      localStorage.removeItem(getSessionKey(code));
+      setLoading(false);
+      return;
+    }
+
+    // Controlla che il giocatore esista ancora nel DB
+    const stillIn = data.players?.find((p: Player) => p.id === session.id);
+    if (!stillIn) {
+      localStorage.removeItem(getSessionKey(code));
+      setLoading(false);
+      return;
+    }
+
+    setMyPlayer(session);
+    setPlayers(data.players);
+    setJoined(true);
+    setLoading(false);
+  }
+
   async function joinGame(name: string) {
     setLoading(true);
     setError('');
@@ -74,6 +134,7 @@ export default function LobbyPage() {
       return;
     }
 
+    saveSession(code, data.player);
     setMyPlayer(data.player);
     setPlayers(data.allPlayers);
     setJoined(true);
@@ -100,15 +161,9 @@ export default function LobbyPage() {
       text: `Unisciti alla mia partita! Codice sala: ${code}`,
       url,
     };
-
     if (navigator.share && navigator.canShare(shareData)) {
-      try {
-        await navigator.share(shareData);
-      } catch {
-        // utente ha annullato, non fare nulla
-      }
+      try { await navigator.share(shareData); } catch { /* annullato */ }
     } else {
-      // fallback: copia negli appunti
       try {
         await navigator.clipboard.writeText(url);
         setCopied(true);
@@ -117,6 +172,14 @@ export default function LobbyPage() {
         prompt('Copia questo link:', url);
       }
     }
+  }
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
+        <p className="text-gray-400 animate-pulse">Caricamento...</p>
+      </main>
+    );
   }
 
   if (!joined) {
