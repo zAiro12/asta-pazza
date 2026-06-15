@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
 
   const [game] = await db
     .update(games)
-    .set({ status: 'playing' })
+    .set({ status: 'active' })
     .where(eq(games.code, code.toUpperCase()))
     .returning();
 
