@@ -85,7 +85,7 @@ export default function LobbyPage() {
     await joinGame(playerName);
   }
 
-    async function handleStart() {
+  async function handleStart() {
     await fetch('/api/lobby/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -95,12 +95,27 @@ export default function LobbyPage() {
 
   async function handleShare() {
     const url = `${window.location.origin}/lobby/${code}`;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      prompt('Copia questo link:', url);
+    const shareData = {
+      title: 'Asta Pazza',
+      text: `Unisciti alla mia partita! Codice sala: ${code}`,
+      url,
+    };
+
+    if (navigator.share && navigator.canShare(shareData)) {
+      try {
+        await navigator.share(shareData);
+      } catch {
+        // utente ha annullato, non fare nulla
+      }
+    } else {
+      // fallback: copia negli appunti
+      try {
+        await navigator.clipboard.writeText(url);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        prompt('Copia questo link:', url);
+      }
     }
   }
 
