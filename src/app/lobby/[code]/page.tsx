@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { getPusherClient } from '@/lib/pusher-client';
 
 interface Player {
@@ -13,6 +13,7 @@ interface Player {
 export default function LobbyPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const code = (params.code as string).toUpperCase();
 
   const [players, setPlayers] = useState<Player[]>([]);
@@ -21,6 +22,16 @@ export default function LobbyPage() {
   const [joined, setJoined] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  // Auto-join se arriva da "Crea Partita" con ?name=
+  useEffect(() => {
+    const nameFromUrl = searchParams.get('name');
+    if (nameFromUrl && !joined) {
+      joinGame(nameFromUrl);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!joined) return;
@@ -31,11 +42,9 @@ export default function LobbyPage() {
     channel.bind('player-joined', (data: { players: Player[] }) => {
       setPlayers(data.players);
     });
-
     channel.bind('player-left', (data: { players: Player[] }) => {
       setPlayers(data.players);
     });
-
     channel.bind('game-started', () => {
       router.push(`/game/${code}`);
     });
@@ -46,15 +55,14 @@ export default function LobbyPage() {
     };
   }, [joined, code, router]);
 
-  async function handleJoin() {
-    if (!playerName.trim()) return;
+  async function joinGame(name: string) {
     setLoading(true);
     setError('');
 
     const res = await fetch('/api/lobby/join', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, playerName: playerName.trim() }),
+      body: JSON.stringify({ code, playerName: name.trim() }),
     });
 
     const data = await res.json();
@@ -70,12 +78,28 @@ export default function LobbyPage() {
     setLoading(false);
   }
 
+  async function handleJoin() {
+    if (!playerName.trim()) return;
+    await joinGame(playerName);
+  }
+
   async function handleStart() {
     await fetch('/api/lobby/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code }),
     });
+  }
+
+  async function handleShare() {
+    const url = `${window.location.origin}/lobby/${code}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      prompt('Copia questo link:', url);
+    }
   }
 
   if (!joined) {
@@ -93,6 +117,7 @@ export default function LobbyPage() {
             onKeyDown={e => e.key === 'Enter' && handleJoin()}
             className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 mb-4 focus:outline-none focus:ring-2 focus:ring-yellow-400"
             maxLength={20}
+            autoFocus
           />
 
           {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
@@ -117,7 +142,16 @@ export default function LobbyPage() {
           <span className="font-mono text-yellow-400 text-xl tracking-widest">{code}</span>
         </div>
 
-        <p className="text-gray-400 text-sm mb-4">{players.length} giocatore{players.length !== 1 ? 'i' : ''} connesso{players.length !== 1 ? 'i' : ''}</p>
+        <button
+          onClick={handleShare}
+          className="w-full bg-gray-800 hover:bg-gray-700 text-white py-3 rounded-xl transition mb-6 flex items-center justify-center gap-2 text-sm font-medium"
+        >
+          {copied ? '✅ Link copiato!' : '🔗 Condividi link sala'}
+        </button>
+
+        <p className="text-gray-400 text-sm mb-4">
+          {players.length} giocatore{players.length !== 1 ? 'i' : ''} connesso{players.length !== 1 ? 'i' : ''}
+        </p>
 
         <ul className="space-y-2 mb-8">
           {players.map((p) => (
