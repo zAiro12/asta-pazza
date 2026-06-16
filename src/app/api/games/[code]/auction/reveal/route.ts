@@ -1,6 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
-import { games, players, auctions, bids, playerGoods } from '@db/schema';
+import { games, players, auctions, bids, playerGoods, goods } from '@db/schema';
 import { eq, and } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
 
   const [caller] = await db.select().from(players).where(eq(players.id, body.playerId));
   if (!caller || caller.gameId !== game.id || !caller.isHost)
-    return NextResponse.json({ error: "Solo l'host può rivelare le offerte" }, { status: 403 });
+    return NextResponse.json({ error: "Solo l'host pu\u00f2 rivelare le offerte" }, { status: 403 });
 
   const [auction] = await db
     .select()
@@ -34,6 +34,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     .where(and(eq(auctions.gameId, game.id), eq(auctions.status, 'bidding')))
     .limit(1);
   if (!auction) return NextResponse.json({ error: 'Nessuna asta da rivelare' }, { status: 409 });
+
+  // Carica il bene per avere il nome
+  const [auctionGood] = await db.select().from(goods).where(eq(goods.id, auction.goodId));
 
   // Carica tutte le offerte con i nomi dei giocatori
   const rawBids = await db
@@ -90,6 +93,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   await pusherServer.trigger(`game-${upperCode}`, 'bids-revealed', {
     auctionId: auction.id,
     goodId: auction.goodId,
+    goodName: auctionGood?.name ?? '',
     turn: auction.turn,
     bids: typedBids,
     winnerId: result.winnerId,
