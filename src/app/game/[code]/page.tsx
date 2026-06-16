@@ -79,6 +79,10 @@ export default function GamePage() {
   const [auction, setAuction] = useState<AuctionState | null>(null);
   const [phase, setPhase] = useState<'waiting' | 'bidding' | 'revealing' | 'finished'>('waiting');
 
+  // Turno persistente (visibile anche quando auction è null)
+  const [lastTurn, setLastTurn] = useState<number | null>(null);
+  const [lastTotalTurns, setLastTotalTurns] = useState<number | null>(null);
+
   // Bidding
   const [bidAmount, setBidAmount] = useState('');
   const [useMercatoNero, setUseMercatoNero] = useState(false);
@@ -157,19 +161,23 @@ export default function GamePage() {
       if (me) setMyPlayer(me);
       setPlayers(gameData.players ?? []);
       setTotalPlayers((gameData.players ?? []).length);
+      if (gameData.game?.totalTurns) setLastTotalTurns(gameData.game.totalTurns);
 
       if (auctionRes.ok) {
         const aData = await auctionRes.json();
         if (aData.auction) {
+          const totalTurns = gameData.game.totalTurns;
           setAuction({
             id: aData.auction.id,
             turn: aData.auction.turn,
-            totalTurns: gameData.game.totalTurns,
+            totalTurns,
             status: aData.auction.status,
             good: aData.auction.good,
             isEventTurn: false,
             timerSeconds: 45,
           });
+          setLastTurn(aData.auction.turn);
+          setLastTotalTurns(totalTurns);
           setPhase(aData.auction.status === 'revealing' ? 'revealing' : 'bidding');
           if (aData.auction.status === 'bidding') startTimer(45);
           if (aData.auction.status === 'revealing' && aData.bids) {
@@ -194,7 +202,6 @@ export default function GamePage() {
       turn: number; totalTurns: number; isEventTurn: boolean; timerSeconds: number;
       event: GameEvent | null;
     }) => {
-      // Accumula eventi: se arriva un nuovo evento, aggiungilo alla lista
       if (data.event) {
         setActiveEvents(prev => {
           const alreadyIn = prev.some(e => e.id === data.event!.id);
@@ -213,6 +220,8 @@ export default function GamePage() {
         isEventTurn: data.isEventTurn,
         timerSeconds: data.timerSeconds,
       });
+      setLastTurn(data.turn);
+      setLastTotalTurns(data.totalTurns);
       setPhase('bidding');
       setHasBid(false);
       setBidAmount('');
@@ -248,13 +257,11 @@ export default function GamePage() {
       setPlayers(data.players);
       setMyPlayer(prev => data.players.find(p => p.id === prev?.id) ?? prev);
 
-      // Aggiorna storico beni
       if (data.winnerId && data.goodId) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
-          const goodName = data.bids[0] ? '' : '';
           const entry: HistoryEntry = {
-            goodName: goodName,
+            goodName: '',
             pricePaid: data.winningBid,
             turn: data.turn ?? 0,
           };
@@ -266,7 +273,6 @@ export default function GamePage() {
     channel.bind('auction-closed', (data?: { goodId?: number; goodName?: string; winnerId?: number; winningBid?: number; turn?: number }) => {
       setPhase('waiting');
       setAuction(null);
-      // Aggiorna storico con nome bene (arriva da close)
       if (data?.winnerId && data?.goodName) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
@@ -381,6 +387,10 @@ export default function GamePage() {
     ? revealedBids.find(b => b.playerId === winnerId && b.isMercatoNero)
     : null;
 
+  // Turno da mostrare nell'header (usa auction se disponibile, altrimenti lastTurn)
+  const displayTurn = auction?.turn ?? lastTurn;
+  const displayTotalTurns = auction?.totalTurns ?? lastTotalTurns;
+
   return (
     <main className="min-h-screen bg-gray-950 text-white p-4 flex flex-col gap-4 max-w-lg mx-auto">
 
@@ -396,8 +406,8 @@ export default function GamePage() {
       {/* Crediti e turno */}
       <div className="bg-gray-900 rounded-2xl px-4 py-3 flex items-center justify-between">
         <span className="text-gray-400 text-sm">
-          Turno <span className="text-white font-bold">{auction?.turn ?? '—'}</span>
-          {auction ? <span className="text-gray-500"> / {auction.totalTurns}</span> : null}
+          Turno <span className="text-white font-bold">{displayTurn ?? '—'}</span>
+          {displayTotalTurns ? <span className="text-gray-500"> / {displayTotalTurns}</span> : null}
         </span>
         <span className="text-sm">
           💰 <span className="font-bold text-yellow-400">{myPlayer?.credits ?? '—'}</span> crediti
