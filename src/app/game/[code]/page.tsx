@@ -54,10 +54,19 @@ interface Objective {
 }
 
 interface GeneralBonus {
+  id: string;
   name: string;
   description: string;
-  points: number;
+  points: number | null;
 }
+
+// Punti fissi per i bonus generali (specchiati da scoring.ts)
+const GENERAL_BONUS_POINTS: Record<string, string> = {
+  mini_collection: '10',
+  full_collection: '20',
+  category_majority: '25',
+  residual_credits: '1 per credito',
+};
 
 function getSessionKey(code: string) {
   return `asta-player-${code}`;
@@ -69,11 +78,12 @@ function loadSession(code: string): { id: number; name: string; isHost: boolean 
   } catch { return null; }
 }
 
-function Toast({ message, color = 'yellow' }: { message: string; color?: 'yellow' | 'orange' | 'red' }) {
+function Toast({ message, color = 'yellow' }: { message: string; color?: 'yellow' | 'orange' | 'red' | 'green' }) {
   const colorMap = {
     yellow: 'bg-yellow-500/90 text-gray-900',
     orange: 'bg-orange-500/90 text-white',
     red: 'bg-red-600/90 text-white',
+    green: 'bg-green-600/90 text-white',
   };
   return (
     <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl font-semibold text-sm shadow-xl animate-bounce ${colorMap[color]}`}>
@@ -129,16 +139,17 @@ export default function GamePage() {
   const [goodsHistory, setGoodsHistory] = useState<Record<number, HistoryEntry[]>>({});
   const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
 
-  const [toast, setToast] = useState<{ message: string; color: 'yellow' | 'orange' | 'red' } | null>(null);
+  const [toast, setToast] = useState<{ message: string; color: 'yellow' | 'orange' | 'red' | 'green' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Obiettivi
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [generalBonuses, setGeneralBonuses] = useState<GeneralBonus[]>([]);
+  const [completedObjectiveIds, setCompletedObjectiveIds] = useState<number[]>([]);
   const [showObjectives, setShowObjectives] = useState(false);
   const [objectivesLoaded, setObjectivesLoaded] = useState(false);
 
-  function showToast(message: string, color: 'yellow' | 'orange' | 'red' = 'yellow') {
+  function showToast(message: string, color: 'yellow' | 'orange' | 'red' | 'green' = 'yellow') {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ message, color });
     toastTimer.current = setTimeout(() => setToast(null), 3500);
@@ -162,24 +173,28 @@ export default function GamePage() {
     }, 1000);
   }, [stopTimer]);
 
-  // Carica obiettivi la prima volta che il pannello viene aperto
-  async function loadObjectives(playerId: number) {
-    if (objectivesLoaded) return;
+  // Carica (o ricarica) obiettivi: ricarica se objectivesLoaded=false o se force=true
+  const loadObjectives = useCallback(async (playerId: number, force = false) => {
+    if (objectivesLoaded && !force) return;
     try {
       const res = await fetch(`/api/games/${code}/objectives?playerId=${playerId}`);
       if (!res.ok) return;
       const data = await res.json();
-      setObjectives(data.personalObjectives ?? []);
+      const personal: Objective[] = data.personalObjectives ?? [];
+      setObjectives(personal);
       setGeneralBonuses(data.generalBonuses ?? []);
-      setObjectivesLoaded(true);
+      setCompletedObjectiveIds(data.completed ?? []);
+      // Marca come caricato solo se abbiamo effettivamente dati (o se il giocatore non ha obiettivi)
+      if (personal.length > 0 || force) setObjectivesLoaded(true);
     } catch { /* silenzioso */ }
-  }
+  }, [code, objectivesLoaded]);
 
   function handleToggleObjectives() {
     const next = !showObjectives;
     setShowObjectives(next);
-    if (next && myPlayer && !objectivesLoaded) {
-      loadObjectives(myPlayer.id);
+    if (next && myPlayer) {
+      // Ricarica sempre quando si apre il pannello, così si aggiorna lo stato completati
+      loadObjectives(myPlayer.id, true);
     }
   }
 
@@ -261,31 +276,69 @@ export default function GamePage() {
     });
 
     channel.bind('bids-revealed', (data: {
-      auctionId: number; bids: (Bid & { playerName: string })[];
-      winnerId: number | null; winningBid: number; details: string;
-      players: Player[]; goodId?: number; turn?: number;
+      auctionId: number;
+      bids: (Bid & { playerName: string })[];
+      winnerId: number | null;
+      winningBid: number;
+      details: string;
+      players: Player[];
+      goodId?: number;
+      goodName?: string;
+      turn?: number;
     }) => {
       stopTimer(); setPhase('revealing');
       setRevealedBids(data.bids); setWinnerId(data.winnerId); setWinningBid(data.winningBid);
       setResultDetails(data.details); setPlayers(data.players);
       setMyPlayer(prev => data.players.find(p => p.id === prev?.id) ?? prev);
-      if (data.winnerId && data.goodId) {
+      // Salva subito in storico con il nome già disponibile
+      if (data.winnerId && data.goodName) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
-          return { ...prev, [data.winnerId!]: [...existing, { goodName: '', pricePaid: data.winningBid, turn: data.turn ?? 0 }] };
+          const alreadyIn = existing.some(e => e.turn === data.turn);
+          if (alreadyIn) return prev;
+          return { ...prev, [data.winnerId!]: [...existing, { goodName: data.goodName!, pricePaid: data.winningBid, turn: data.turn ?? 0 }] };
         });
       }
     });
 
-    channel.bind('auction-closed', (data?: { goodId?: number; goodName?: string; winnerId?: number; winningBid?: number; turn?: number }) => {
+    channel.bind('auction-closed', (data?: {
+      goodId?: number;
+      goodName?: string;
+      winnerId?: number;
+      winningBid?: number;
+      turn?: number;
+      completedObjectivesByPlayer?: Record<number, number[]>;
+    }) => {
       setPhase('waiting'); setAuction(null);
+
+      // Storico: aggiorna solo se il nome non era già presente da bids-revealed
       if (data?.winnerId && data?.goodName) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
           const alreadyIn = existing.some(e => e.turn === data.turn);
-          if (alreadyIn) return { ...prev, [data.winnerId!]: existing.map(e => e.turn === data.turn ? { ...e, goodName: data.goodName! } : e) };
+          if (alreadyIn) {
+            // aggiorna il nome se era rimasto vuoto
+            return { ...prev, [data.winnerId!]: existing.map(e => e.turn === data.turn && !e.goodName ? { ...e, goodName: data.goodName! } : e) };
+          }
           return { ...prev, [data.winnerId!]: [...existing, { goodName: data.goodName!, pricePaid: data.winningBid ?? 0, turn: data.turn ?? 0 }] };
         });
+      }
+
+      // Aggiorna obiettivi completati per il giocatore corrente
+      if (data?.completedObjectivesByPlayer) {
+        const myId = session?.id;
+        if (myId) {
+          const myCompleted = data.completedObjectivesByPlayer[myId];
+          if (myCompleted) {
+            setCompletedObjectiveIds(prev => {
+              const newIds = myCompleted.filter(id => !prev.includes(id));
+              if (newIds.length === 0) return prev;
+              // Toast per ogni nuovo obiettivo completato
+              newIds.forEach(() => showToast('🏆 Obiettivo completato!', 'green'));
+              return [...prev, ...newIds];
+            });
+          }
+        }
       }
     });
 
@@ -373,7 +426,12 @@ export default function GamePage() {
           onClick={handleToggleObjectives}
           className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-800 transition"
         >
-          <span className="text-sm font-semibold text-gray-300">🎯 I miei obiettivi</span>
+          <span className="text-sm font-semibold text-gray-300">
+            🎯 I miei obiettivi
+            {completedObjectiveIds.length > 0 && (
+              <span className="ml-2 text-green-400 text-xs">✅ {completedObjectiveIds.length} completat{completedObjectiveIds.length === 1 ? 'o' : 'i'}</span>
+            )}
+          </span>
           <span className="text-gray-500 text-xs">{showObjectives ? '▲ chiudi' : '▼ mostra'}</span>
         </button>
 
@@ -390,16 +448,28 @@ export default function GamePage() {
             {objectives.length > 0 && (
               <div className="space-y-2">
                 <p className="text-xs text-gray-500 uppercase tracking-wide">Obiettivi personali</p>
-                {objectives.map(obj => (
-                  <div key={obj.id} className={`border rounded-xl px-3 py-2 space-y-0.5 ${RARITY_STYLE[obj.rarity] ?? 'border-gray-600 text-gray-300'}`}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold uppercase">{RARITY_LABEL[obj.rarity]}</span>
-                      <span className="font-bold text-sm">+{obj.points} pt</span>
+                {objectives.map(obj => {
+                  const isCompleted = completedObjectiveIds.includes(obj.id);
+                  return (
+                    <div
+                      key={obj.id}
+                      className={`border rounded-xl px-3 py-2 space-y-0.5 transition ${
+                        isCompleted
+                          ? 'border-green-500 bg-green-500/10 opacity-80'
+                          : (RARITY_STYLE[obj.rarity] ?? 'border-gray-600 text-gray-300')
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase">
+                          {isCompleted ? '✅ Completato' : (RARITY_LABEL[obj.rarity] ?? obj.rarity)}
+                        </span>
+                        <span className="font-bold text-sm">+{obj.points} pt</span>
+                      </div>
+                      <p className="font-semibold text-sm">{obj.name}</p>
+                      <p className="text-xs opacity-75">{obj.description}</p>
                     </div>
-                    <p className="font-semibold text-sm">{obj.name}</p>
-                    <p className="text-xs opacity-75">{obj.description}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -410,7 +480,9 @@ export default function GamePage() {
                   <div key={i} className="border border-gray-600 bg-gray-800 rounded-xl px-3 py-2 space-y-0.5">
                     <div className="flex items-center justify-between">
                       <span className="font-semibold text-sm text-gray-200">{bonus.name}</span>
-                      <span className="font-bold text-sm text-green-400">+{bonus.points} pt</span>
+                      <span className="font-bold text-sm text-green-400">
+                        +{GENERAL_BONUS_POINTS[bonus.id] ?? bonus.points ?? '?'} pt
+                      </span>
                     </div>
                     <p className="text-xs text-gray-400">{bonus.description}</p>
                   </div>
