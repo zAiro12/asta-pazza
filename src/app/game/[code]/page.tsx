@@ -31,6 +31,14 @@ interface AuctionState {
   timerSeconds: number;
 }
 
+interface GameEvent {
+  id: number;
+  name: string;
+  type: string;
+  description: string;
+  effect: Record<string, unknown>;
+}
+
 function getSessionKey(code: string) {
   return `asta-player-${code}`;
 }
@@ -67,6 +75,10 @@ export default function GamePage() {
   // Scugnizzu
   const [scugnizzuLoading, setScugnizzuLoading] = useState(false);
   const [scugnizzuMessage, setScugnizzuMessage] = useState('');
+
+  // Evento
+  const [currentEvent, setCurrentEvent] = useState<GameEvent | null>(null);
+  const [showEventBanner, setShowEventBanner] = useState(false);
 
   // Timer
   const [timeLeft, setTimeLeft] = useState(0);
@@ -139,7 +151,17 @@ export default function GamePage() {
     channel.bind('auction-started', (data: {
       auction: { id: number; turn: number; good: Good; status: string };
       turn: number; totalTurns: number; isEventTurn: boolean; timerSeconds: number;
+      event: GameEvent | null;
     }) => {
+      // Mostra evento se presente
+      if (data.event) {
+        setCurrentEvent(data.event);
+        setShowEventBanner(true);
+      } else {
+        setCurrentEvent(null);
+        setShowEventBanner(false);
+      }
+
       setAuction({
         id: data.auction.id,
         turn: data.turn,
@@ -180,6 +202,8 @@ export default function GamePage() {
     channel.bind('auction-closed', () => {
       setPhase('waiting');
       setAuction(null);
+      setCurrentEvent(null);
+      setShowEventBanner(false);
     });
 
     channel.bind('scugnizzu-used', (data: {
@@ -287,6 +311,21 @@ export default function GamePage() {
         </span>
       </div>
 
+      {/* Banner Evento */}
+      {showEventBanner && currentEvent && (
+        <div className="bg-purple-900/60 border border-purple-500 rounded-2xl px-4 py-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-purple-300 font-bold text-sm uppercase tracking-wide">⚡ Evento — {currentEvent.type}</p>
+            <button
+              onClick={() => setShowEventBanner(false)}
+              className="text-purple-400 hover:text-white text-xs"
+            >✕ chiudi</button>
+          </div>
+          <p className="text-white font-semibold">{currentEvent.name}</p>
+          <p className="text-gray-300 text-sm">{currentEvent.description}</p>
+        </div>
+      )}
+
       {/* Scugnizzu — disponibile sempre se non usato */}
       {myPlayer && !myPlayer.usedScugnizzu && (
         <div className="bg-gray-900 rounded-2xl px-4 py-3 space-y-2">
@@ -327,7 +366,15 @@ export default function GamePage() {
       {/* Fase: bidding */}
       {phase === 'bidding' && auction && (
         <div className="bg-gray-900 rounded-2xl p-6 space-y-4">
-          {auction.isEventTurn && (
+          {auction.isEventTurn && !showEventBanner && currentEvent && (
+            <button
+              onClick={() => setShowEventBanner(true)}
+              className="w-full bg-purple-500/20 border border-purple-500 rounded-xl px-4 py-2 text-purple-300 text-sm font-medium text-center hover:bg-purple-500/30 transition"
+            >
+              ⚡ {currentEvent.name} — tocca per rivedere
+            </button>
+          )}
+          {auction.isEventTurn && !currentEvent && (
             <div className="bg-purple-500/20 border border-purple-500 rounded-xl px-4 py-2 text-purple-300 text-sm font-medium text-center">
               ⚡ Turno Evento!
             </div>
