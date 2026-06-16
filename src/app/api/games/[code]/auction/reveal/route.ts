@@ -18,8 +18,8 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const upperCode = code.toUpperCase();
   const body = await request.json();
-  const sql = neon(process.env.DATABASE_URL!);
-  const db = drizzle(sql);
+  const sqlClient = neon(process.env.DATABASE_URL!);
+  const db = drizzle(sqlClient);
 
   const [game] = await db.select().from(games).where(eq(games.code, upperCode));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
@@ -73,7 +73,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     });
 
     // Scala crediti con SQL raw per evitare race condition
-    await sql`
+    await sqlClient`
       UPDATE players SET credits = credits - ${result.winningBid} WHERE id = ${result.winnerId}
     `;
 
