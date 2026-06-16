@@ -252,7 +252,6 @@ export default function GamePage() {
       if (data.winnerId && data.goodId) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
-          // Trova il nome del bene dalle bids o dall'asta corrente
           const goodName = data.bids[0] ? '' : '';
           const entry: HistoryEntry = {
             goodName: goodName,
@@ -271,10 +270,8 @@ export default function GamePage() {
       if (data?.winnerId && data?.goodName) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
-          // Controlla se già aggiunto (evita duplicati)
           const alreadyIn = existing.some(e => e.turn === data.turn);
           if (alreadyIn) {
-            // Aggiorna il nome se mancante
             return {
               ...prev,
               [data.winnerId!]: existing.map(e =>
@@ -306,10 +303,6 @@ export default function GamePage() {
       showToast(`🧑‍🔧 ${data.playerName} ha usato lo Scugnizzu! (+30 crediti)`, 'orange');
     });
 
-    channel.bind('mercato-nero-declared', (data: { playerName: string }) => {
-      showToast(`🕵️ ${data.playerName} ha dichiarato Mercato Nero!`, 'red');
-    });
-
     channel.bind('game-finished', () => {
       router.push(`/game/${code}/results`);
     });
@@ -321,7 +314,6 @@ export default function GamePage() {
   async function handleBid() {
     if (!myPlayer || !auction) return;
 
-    // Se Mercato Nero: amount = 0 (irrilevante, calcolato al reveal)
     const amount = useMercatoNero ? 0 : parseInt(bidAmount);
     if (!useMercatoNero && (isNaN(amount) || amount < 0)) { setBidError('Inserisci un importo valido'); return; }
     if (!useMercatoNero && amount > myPlayer.credits) { setBidError('Crediti insufficienti'); return; }
@@ -437,7 +429,6 @@ export default function GamePage() {
               ))}
             </div>
           )}
-          {/* Se banner chiuso, mostra i nomi in pillole */}
           {!showEventsBanner && (
             <div className="flex flex-wrap gap-1">
               {activeEvents.map(ev => (
@@ -488,22 +479,18 @@ export default function GamePage() {
       {/* Fase: bidding */}
       {phase === 'bidding' && auction && (
         <div className="bg-gray-900 rounded-2xl p-6 space-y-4">
-          {/* Bene in vendita */}
           <div className="text-center space-y-1">
             <p className="text-gray-400 text-sm">In vendita</p>
             <h2 className="text-2xl font-bold">{auction.good.name}</h2>
             <p className="text-yellow-400 font-semibold">Valore base: {auction.good.baseValue} pt</p>
           </div>
 
-          {/* Timer */}
           <div className="text-center">
             <span className={`text-4xl font-mono font-bold ${timerColor}`}>{timeLeft}s</span>
           </div>
 
-          {/* Form offerta */}
           {!hasBid ? (
             <div className="space-y-3">
-              {/* Bottone Mercato Nero — se attivo, nasconde il campo offerta */}
               {myPlayer && !myPlayer.usedMercatoNero && (
                 <button
                   onClick={() => setUseMercatoNero(v => !v)}
@@ -517,7 +504,6 @@ export default function GamePage() {
                 </button>
               )}
 
-              {/* Campo offerta — visibile solo se NON mercato nero */}
               {!useMercatoNero && (
                 <input
                   type="number"
@@ -532,7 +518,7 @@ export default function GamePage() {
               )}
 
               {useMercatoNero && (
-                <p className="text-red-300 text-xs text-center">Con Mercato Nero non devi inserire un'offerta — vincerai pagando l'offerta più alta + 1.</p>
+                <p className="text-red-300 text-xs text-center">Con Mercato Nero non devi inserire un&apos;offerta — vincerai pagando l&apos;offerta più alta + 1.</p>
               )}
 
               {bidError && <p className="text-red-400 text-sm">{bidError}</p>}
@@ -554,7 +540,6 @@ export default function GamePage() {
             </div>
           )}
 
-          {/* Host: counter conferme + rivela */}
           {myPlayer?.isHost && (
             <div className="space-y-2 mt-2">
               <div className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2">
@@ -585,7 +570,6 @@ export default function GamePage() {
             <p className="text-gray-400 text-sm">Risultato asta</p>
           </div>
 
-          {/* Vincitore — con badge MN prominente se ha usato Mercato Nero */}
           {winnerId ? (
             <div className={`border rounded-xl px-4 py-3 text-center ${
               mercatoNeroWinner
@@ -610,7 +594,6 @@ export default function GamePage() {
             </div>
           )}
 
-          {/* Lista offerte */}
           <ul className="space-y-2">
             {revealedBids.map(bid => (
               <li key={bid.playerId} className={`flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2 ${
@@ -658,7 +641,6 @@ export default function GamePage() {
                 <span className="text-gray-400">💰 {p.credits}</span>
               </button>
 
-              {/* Storico beni del giocatore */}
               {openHistoryPlayerId === p.id && (
                 <div className="mt-1 ml-2 mb-2 space-y-1">
                   {(goodsHistory[p.id] ?? []).length === 0 ? (
