@@ -37,6 +37,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     .limit(1);
   if (!auction) return NextResponse.json({ error: 'Nessuna asta in fase revealing' }, { status: 409 });
 
+  // Carica il bene dell'asta per includerne il nome nel payload
+  const [auctionGood] = await db.select().from(goods).where(eq(goods.id, auction.goodId));
+
   // Chiudi l'asta corrente
   await db
     .update(auctions)
@@ -62,11 +65,15 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     return NextResponse.json({ ok: true, finished: true });
   }
 
-  // Turno normale
+  // Turno normale — includi goodName e winnerId per aggiornare lo storico beni nel client
   await pusherServer.trigger(`game-${upperCode}`, 'auction-closed', {
     auctionId: auction.id,
     turn: auction.turn,
     totalTurns: game.totalTurns,
+    goodId: auction.goodId,
+    goodName: auctionGood?.name ?? '',
+    winnerId: auction.winnerId ?? null,
+    winningBid: auction.winningBid ?? 0,
   });
 
   return NextResponse.json({ ok: true, finished: false });
