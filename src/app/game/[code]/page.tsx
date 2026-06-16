@@ -64,6 +64,10 @@ export default function GamePage() {
   const [winningBid, setWinningBid] = useState<number>(0);
   const [resultDetails, setResultDetails] = useState('');
 
+  // Scugnizzu
+  const [scugnizzuLoading, setScugnizzuLoading] = useState(false);
+  const [scugnizzuMessage, setScugnizzuMessage] = useState('');
+
   // Timer
   const [timeLeft, setTimeLeft] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -154,6 +158,7 @@ export default function GamePage() {
       setWinnerId(null);
       setWinningBid(0);
       setResultDetails('');
+      setScugnizzuMessage('');
       startTimer(data.timerSeconds);
     });
 
@@ -175,6 +180,17 @@ export default function GamePage() {
     channel.bind('auction-closed', () => {
       setPhase('waiting');
       setAuction(null);
+    });
+
+    channel.bind('scugnizzu-used', (data: {
+      playerId: number; playerName: string; newCredits: number;
+    }) => {
+      setPlayers(prev => prev.map(p =>
+        p.id === data.playerId ? { ...p, credits: data.newCredits, usedScugnizzu: true } : p
+      ));
+      setMyPlayer(prev =>
+        prev?.id === data.playerId ? { ...prev, credits: data.newCredits, usedScugnizzu: true } : prev
+      );
     });
 
     channel.bind('game-finished', () => {
@@ -231,6 +247,24 @@ export default function GamePage() {
     });
   }
 
+  async function handleScugnizzu() {
+    if (!myPlayer || myPlayer.usedScugnizzu) return;
+    setScugnizzuLoading(true);
+    setScugnizzuMessage('');
+    const res = await fetch(`/api/games/${code}/scugnizzu`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: myPlayer.id }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setScugnizzuMessage(data.error);
+    } else {
+      setScugnizzuMessage(data.message);
+    }
+    setScugnizzuLoading(false);
+  }
+
   const timerColor = timeLeft > 15 ? 'text-green-400' : timeLeft > 5 ? 'text-yellow-400' : 'text-red-400';
 
   return (
@@ -252,6 +286,28 @@ export default function GamePage() {
           💰 <span className="font-bold text-yellow-400">{myPlayer?.credits ?? '—'}</span> crediti
         </span>
       </div>
+
+      {/* Scugnizzu — disponibile sempre se non usato */}
+      {myPlayer && !myPlayer.usedScugnizzu && (
+        <div className="bg-gray-900 rounded-2xl px-4 py-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-orange-400">🧑‍🔧 Scugnizzu</p>
+              <p className="text-xs text-gray-400">+30 crediti ora, -15 punti a fine partita</p>
+            </div>
+            <button
+              onClick={handleScugnizzu}
+              disabled={scugnizzuLoading}
+              className="bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white font-bold text-sm px-4 py-2 rounded-xl transition"
+            >
+              {scugnizzuLoading ? '...' : 'Usa'}
+            </button>
+          </div>
+          {scugnizzuMessage && (
+            <p className="text-xs text-orange-300">{scugnizzuMessage}</p>
+          )}
+        </div>
+      )}
 
       {/* Fase: waiting */}
       {phase === 'waiting' && (
@@ -405,6 +461,7 @@ export default function GamePage() {
             <li key={p.id} className="flex items-center justify-between text-sm">
               <span className={p.id === myPlayer?.id ? 'font-bold text-yellow-400' : 'text-gray-300'}>
                 {p.name}{p.isHost ? ' 👑' : ''}
+                {p.usedScugnizzu && <span className="text-orange-400 ml-1 text-xs">(Scugnizzu)</span>}
               </span>
               <span className="text-gray-400">💰 {p.credits}</span>
             </li>
