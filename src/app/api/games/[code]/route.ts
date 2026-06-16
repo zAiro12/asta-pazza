@@ -23,8 +23,8 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 // PUT /api/games/[code] — aggiorna stato partita (es. avvia)
 // Quando status diventa 'active':
 //   1. Assegna una categoria base casuale a ogni giocatore (se non già assegnata)
-//   2. Assegna N obiettivi comuni e M rari a ogni giocatore (da game.commonObjectivesCount / rareObjectivesCount)
-//   3. Assegna 1 obiettivo categoria_base a ogni giocatore
+//   2. Assegna N obiettivi comuni e M rari a ogni giocatore
+//   3. Assegna 1 obiettivo categoria_base coerente con il baseCategoryId del giocatore
 export async function PUT(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const body = await request.json();
@@ -70,8 +70,7 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
       }
     }
 
-    // 2. Assegna obiettivi privati (comune, raro, categoria_base) a ogni giocatore
-    // Solo se non già assegnati (idempotente)
+    // 2. Assegna obiettivi privati — solo se non già assegnati (idempotente)
     const existingAssignments = await db
       .select()
       .from(playerObjectiveAssignments)
@@ -86,12 +85,11 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
       const N = game.commonObjectivesCount ?? 1;
       const M = game.rareObjectivesCount ?? 1;
 
-      // Shuffle helper
       function shuffle<T>(arr: T[]): T[] {
         return [...arr].sort(() => Math.random() - 0.5);
       }
 
-      // Ricarica giocatori con categorie già aggiornate
+      // Ricarica giocatori con baseCategoryId già aggiornato
       const freshPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
 
       for (const player of freshPlayers) {
@@ -109,10 +107,21 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
           toInsert.push({ playerId: player.id, gameId: game.id, objectiveId: obj.id, type: 'raro' });
         }
 
-        // 1 obiettivo categoria_base (casuale dal pool)
+        // 1 obiettivo categoria_base: preferisce quelli con condition.categoryId === baseCategoryId del giocatore.
+        // Se non ne esiste uno specifico, cade back su un obiettivo categoria_base generico casuale.
         if (basePool.length > 0) {
-          const baseObj = basePool[Math.floor(Math.random() * basePool.length)];
-          toInsert.push({ playerId: player.id, gameId: game.id, objectiveId: baseObj.id, type: 'categoria_base' });
+          const specificPool = player.baseCategoryId
+            ? basePool.filter(o => {
+                const cond = (o.condition as any);
+                return cond?.categoryId === player.baseCategoryId;
+              })
+            : [];
+
+          const selectedBaseObj = specificPool.length > 0
+            ? specificPool[Math.floor(Math.random() * specificPool.length)]
+            : basePool[Math.floor(Math.random() * basePool.length)];
+
+          toInsert.push({ playerId: player.id, gameId: game.id, objectiveId: selectedBaseObj.id, type: 'categoria_base' });
         }
 
         if (toInsert.length > 0) {
