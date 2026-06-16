@@ -45,6 +45,20 @@ interface HistoryEntry {
   turn: number;
 }
 
+interface Objective {
+  id: number;
+  name: string;
+  description: string;
+  points: number;
+  rarity: 'common' | 'rare' | 'base_category';
+}
+
+interface GeneralBonus {
+  name: string;
+  description: string;
+  points: number;
+}
+
 function getSessionKey(code: string) {
   return `asta-player-${code}`;
 }
@@ -55,7 +69,6 @@ function loadSession(code: string): { id: number; name: string; isHost: boolean 
   } catch { return null; }
 }
 
-// Toast notification component
 function Toast({ message, color = 'yellow' }: { message: string; color?: 'yellow' | 'orange' | 'red' }) {
   const colorMap = {
     yellow: 'bg-yellow-500/90 text-gray-900',
@@ -69,6 +82,17 @@ function Toast({ message, color = 'yellow' }: { message: string; color?: 'yellow
   );
 }
 
+const RARITY_STYLE: Record<string, string> = {
+  base_category: 'border-yellow-500 bg-yellow-500/10 text-yellow-300',
+  rare: 'border-purple-500 bg-purple-500/10 text-purple-300',
+  common: 'border-blue-500 bg-blue-500/10 text-blue-300',
+};
+const RARITY_LABEL: Record<string, string> = {
+  base_category: '⭐ Base',
+  rare: '🟣 Raro',
+  common: '🔵 Comune',
+};
+
 export default function GamePage() {
   const params = useParams();
   const router = useRouter();
@@ -79,44 +103,40 @@ export default function GamePage() {
   const [auction, setAuction] = useState<AuctionState | null>(null);
   const [phase, setPhase] = useState<'waiting' | 'bidding' | 'revealing' | 'finished'>('waiting');
 
-  // Turno persistente (visibile anche quando auction è null)
   const [lastTurn, setLastTurn] = useState<number | null>(null);
   const [lastTotalTurns, setLastTotalTurns] = useState<number | null>(null);
 
-  // Bidding
   const [bidAmount, setBidAmount] = useState('');
   const [useMercatoNero, setUseMercatoNero] = useState(false);
   const [hasBid, setHasBid] = useState(false);
   const [bidError, setBidError] = useState('');
   const [bidLoading, setBidLoading] = useState(false);
 
-  // Conferme offerte (per host)
   const [confirmedCount, setConfirmedCount] = useState(0);
   const [totalPlayers, setTotalPlayers] = useState(0);
 
-  // Revealing
   const [revealedBids, setRevealedBids] = useState<(Bid & { playerName: string })[]>([]);
   const [winnerId, setWinnerId] = useState<number | null>(null);
   const [winningBid, setWinningBid] = useState<number>(0);
   const [resultDetails, setResultDetails] = useState('');
 
-  // Scugnizzu
   const [scugnizzuLoading, setScugnizzuLoading] = useState(false);
   const [scugnizzuMessage, setScugnizzuMessage] = useState('');
 
-  // Tutti gli eventi attivi accumulati
   const [activeEvents, setActiveEvents] = useState<GameEvent[]>([]);
   const [showEventsBanner, setShowEventsBanner] = useState(false);
 
-  // Storico beni per giocatore: playerId -> HistoryEntry[]
   const [goodsHistory, setGoodsHistory] = useState<Record<number, HistoryEntry[]>>({});
-
-  // Storico aperto
   const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
 
-  // Toast
   const [toast, setToast] = useState<{ message: string; color: 'yellow' | 'orange' | 'red' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Obiettivi
+  const [objectives, setObjectives] = useState<Objective[]>([]);
+  const [generalBonuses, setGeneralBonuses] = useState<GeneralBonus[]>([]);
+  const [showObjectives, setShowObjectives] = useState(false);
+  const [objectivesLoaded, setObjectivesLoaded] = useState(false);
 
   function showToast(message: string, color: 'yellow' | 'orange' | 'red' = 'yellow') {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -124,7 +144,6 @@ export default function GamePage() {
     toastTimer.current = setTimeout(() => setToast(null), 3500);
   }
 
-  // Timer
   const [timeLeft, setTimeLeft] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -142,6 +161,27 @@ export default function GamePage() {
       });
     }, 1000);
   }, [stopTimer]);
+
+  // Carica obiettivi la prima volta che il pannello viene aperto
+  async function loadObjectives(playerId: number) {
+    if (objectivesLoaded) return;
+    try {
+      const res = await fetch(`/api/games/${code}/objectives?playerId=${playerId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setObjectives(data.personalObjectives ?? []);
+      setGeneralBonuses(data.generalBonuses ?? []);
+      setObjectivesLoaded(true);
+    } catch { /* silenzioso */ }
+  }
+
+  function handleToggleObjectives() {
+    const next = !showObjectives;
+    setShowObjectives(next);
+    if (next && myPlayer && !objectivesLoaded) {
+      loadObjectives(myPlayer.id);
+    }
+  }
 
   // Init
   useEffect(() => {
@@ -180,9 +220,7 @@ export default function GamePage() {
           setLastTotalTurns(totalTurns);
           setPhase(aData.auction.status === 'revealing' ? 'revealing' : 'bidding');
           if (aData.auction.status === 'bidding') startTimer(45);
-          if (aData.auction.status === 'revealing' && aData.bids) {
-            setRevealedBids(aData.bids);
-          }
+          if (aData.auction.status === 'revealing' && aData.bids) setRevealedBids(aData.bids);
         }
       }
     }
@@ -210,108 +248,54 @@ export default function GamePage() {
         });
         setShowEventsBanner(true);
       }
-
-      setAuction({
-        id: data.auction.id,
-        turn: data.turn,
-        totalTurns: data.totalTurns,
-        status: 'bidding',
-        good: data.auction.good,
-        isEventTurn: data.isEventTurn,
-        timerSeconds: data.timerSeconds,
-      });
-      setLastTurn(data.turn);
-      setLastTotalTurns(data.totalTurns);
-      setPhase('bidding');
-      setHasBid(false);
-      setBidAmount('');
-      setUseMercatoNero(false);
-      setBidError('');
-      setRevealedBids([]);
-      setWinnerId(null);
-      setWinningBid(0);
-      setResultDetails('');
-      setScugnizzuMessage('');
-      setConfirmedCount(0);
+      setAuction({ id: data.auction.id, turn: data.turn, totalTurns: data.totalTurns, status: 'bidding', good: data.auction.good, isEventTurn: data.isEventTurn, timerSeconds: data.timerSeconds });
+      setLastTurn(data.turn); setLastTotalTurns(data.totalTurns);
+      setPhase('bidding'); setHasBid(false); setBidAmount(''); setUseMercatoNero(false);
+      setBidError(''); setRevealedBids([]); setWinnerId(null); setWinningBid(0);
+      setResultDetails(''); setScugnizzuMessage(''); setConfirmedCount(0);
       startTimer(data.timerSeconds);
     });
 
     channel.bind('bid-confirmed', (data: { auctionId: number; confirmedCount: number; totalPlayers: number }) => {
-      setConfirmedCount(data.confirmedCount);
-      setTotalPlayers(data.totalPlayers);
+      setConfirmedCount(data.confirmedCount); setTotalPlayers(data.totalPlayers);
     });
 
     channel.bind('bids-revealed', (data: {
       auctionId: number; bids: (Bid & { playerName: string })[];
       winnerId: number | null; winningBid: number; details: string;
-      players: Player[];
-      goodId?: number;
-      turn?: number;
+      players: Player[]; goodId?: number; turn?: number;
     }) => {
-      stopTimer();
-      setPhase('revealing');
-      setRevealedBids(data.bids);
-      setWinnerId(data.winnerId);
-      setWinningBid(data.winningBid);
-      setResultDetails(data.details);
-      setPlayers(data.players);
+      stopTimer(); setPhase('revealing');
+      setRevealedBids(data.bids); setWinnerId(data.winnerId); setWinningBid(data.winningBid);
+      setResultDetails(data.details); setPlayers(data.players);
       setMyPlayer(prev => data.players.find(p => p.id === prev?.id) ?? prev);
-
       if (data.winnerId && data.goodId) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
-          const entry: HistoryEntry = {
-            goodName: '',
-            pricePaid: data.winningBid,
-            turn: data.turn ?? 0,
-          };
-          return { ...prev, [data.winnerId!]: [...existing, entry] };
+          return { ...prev, [data.winnerId!]: [...existing, { goodName: '', pricePaid: data.winningBid, turn: data.turn ?? 0 }] };
         });
       }
     });
 
     channel.bind('auction-closed', (data?: { goodId?: number; goodName?: string; winnerId?: number; winningBid?: number; turn?: number }) => {
-      setPhase('waiting');
-      setAuction(null);
+      setPhase('waiting'); setAuction(null);
       if (data?.winnerId && data?.goodName) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
           const alreadyIn = existing.some(e => e.turn === data.turn);
-          if (alreadyIn) {
-            return {
-              ...prev,
-              [data.winnerId!]: existing.map(e =>
-                e.turn === data.turn ? { ...e, goodName: data.goodName! } : e
-              ),
-            };
-          }
-          return {
-            ...prev,
-            [data.winnerId!]: [...existing, {
-              goodName: data.goodName!,
-              pricePaid: data.winningBid ?? 0,
-              turn: data.turn ?? 0,
-            }],
-          };
+          if (alreadyIn) return { ...prev, [data.winnerId!]: existing.map(e => e.turn === data.turn ? { ...e, goodName: data.goodName! } : e) };
+          return { ...prev, [data.winnerId!]: [...existing, { goodName: data.goodName!, pricePaid: data.winningBid ?? 0, turn: data.turn ?? 0 }] };
         });
       }
     });
 
-    channel.bind('scugnizzu-used', (data: {
-      playerId: number; playerName: string; newCredits: number;
-    }) => {
-      setPlayers(prev => prev.map(p =>
-        p.id === data.playerId ? { ...p, credits: data.newCredits, usedScugnizzu: true } : p
-      ));
-      setMyPlayer(prev =>
-        prev?.id === data.playerId ? { ...prev, credits: data.newCredits, usedScugnizzu: true } : prev
-      );
+    channel.bind('scugnizzu-used', (data: { playerId: number; playerName: string; newCredits: number }) => {
+      setPlayers(prev => prev.map(p => p.id === data.playerId ? { ...p, credits: data.newCredits, usedScugnizzu: true } : p));
+      setMyPlayer(prev => prev?.id === data.playerId ? { ...prev, credits: data.newCredits, usedScugnizzu: true } : prev);
       showToast(`🧑‍🔧 ${data.playerName} ha usato lo Scugnizzu! (+30 crediti)`, 'orange');
     });
 
-    channel.bind('game-finished', () => {
-      router.push(`/game/${code}/results`);
-    });
+    channel.bind('game-finished', () => router.push(`/game/${code}/results`));
 
     return () => { channel.unbind_all(); pusher.unsubscribe(`game-${code}`); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -319,82 +303,51 @@ export default function GamePage() {
 
   async function handleBid() {
     if (!myPlayer || !auction) return;
-
     const amount = useMercatoNero ? 0 : parseInt(bidAmount);
     if (!useMercatoNero && (isNaN(amount) || amount < 0)) { setBidError('Inserisci un importo valido'); return; }
     if (!useMercatoNero && amount > myPlayer.credits) { setBidError('Crediti insufficienti'); return; }
-
-    setBidLoading(true);
-    setBidError('');
+    setBidLoading(true); setBidError('');
     const res = await fetch(`/api/games/${code}/auction/bid`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ playerId: myPlayer.id, amount, isMercatoNero: useMercatoNero }),
     });
     const data = await res.json();
     if (!res.ok) { setBidError(data.error); setBidLoading(false); return; }
-    setHasBid(true);
-    setBidLoading(false);
+    setHasBid(true); setBidLoading(false);
   }
 
   async function handleReveal() {
     if (!myPlayer?.isHost) return;
-    await fetch(`/api/games/${code}/auction/reveal`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: myPlayer.id }),
-    });
+    await fetch(`/api/games/${code}/auction/reveal`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerId: myPlayer.id }) });
   }
 
   async function handleClose() {
     if (!myPlayer?.isHost) return;
-    await fetch(`/api/games/${code}/auction/close`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: myPlayer.id }),
-    });
+    await fetch(`/api/games/${code}/auction/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerId: myPlayer.id }) });
   }
 
   async function handleNextAuction() {
     if (!myPlayer?.isHost) return;
-    await fetch(`/api/games/${code}/auction`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: myPlayer.id }),
-    });
+    await fetch(`/api/games/${code}/auction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerId: myPlayer.id }) });
   }
 
   async function handleScugnizzu() {
     if (!myPlayer || myPlayer.usedScugnizzu) return;
-    setScugnizzuLoading(true);
-    setScugnizzuMessage('');
-    const res = await fetch(`/api/games/${code}/scugnizzu`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: myPlayer.id }),
-    });
+    setScugnizzuLoading(true); setScugnizzuMessage('');
+    const res = await fetch(`/api/games/${code}/scugnizzu`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerId: myPlayer.id }) });
     const data = await res.json();
-    if (!res.ok) {
-      setScugnizzuMessage(data.error);
-    } else {
-      setScugnizzuMessage(data.message);
-    }
+    setScugnizzuMessage(res.ok ? data.message : data.error);
     setScugnizzuLoading(false);
   }
 
   const timerColor = timeLeft > 15 ? 'text-green-400' : timeLeft > 5 ? 'text-yellow-400' : 'text-red-400';
-  const mercatoNeroWinner = winnerId
-    ? revealedBids.find(b => b.playerId === winnerId && b.isMercatoNero)
-    : null;
-
-  // Turno da mostrare nell'header (usa auction se disponibile, altrimenti lastTurn)
+  const mercatoNeroWinner = winnerId ? revealedBids.find(b => b.playerId === winnerId && b.isMercatoNero) : null;
   const displayTurn = auction?.turn ?? lastTurn;
   const displayTotalTurns = auction?.totalTurns ?? lastTotalTurns;
 
   return (
     <main className="min-h-screen bg-gray-950 text-white p-4 flex flex-col gap-4 max-w-lg mx-auto">
 
-      {/* Toast globale */}
       {toast && <Toast message={toast.message} color={toast.color} />}
 
       {/* Header */}
@@ -414,17 +367,68 @@ export default function GamePage() {
         </span>
       </div>
 
-      {/* Banner eventi attivi (tutti accumulati) */}
+      {/* Obiettivi personali — collassabile */}
+      <div className="bg-gray-900 rounded-2xl overflow-hidden">
+        <button
+          onClick={handleToggleObjectives}
+          className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-800 transition"
+        >
+          <span className="text-sm font-semibold text-gray-300">🎯 I miei obiettivi</span>
+          <span className="text-gray-500 text-xs">{showObjectives ? '▲ chiudi' : '▼ mostra'}</span>
+        </button>
+
+        {showObjectives && (
+          <div className="px-4 pb-4 space-y-3">
+            {!objectivesLoaded && (
+              <p className="text-gray-500 text-xs animate-pulse">Caricamento...</p>
+            )}
+
+            {objectivesLoaded && objectives.length === 0 && (
+              <p className="text-gray-500 text-xs">Nessun obiettivo assegnato.</p>
+            )}
+
+            {objectives.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Obiettivi personali</p>
+                {objectives.map(obj => (
+                  <div key={obj.id} className={`border rounded-xl px-3 py-2 space-y-0.5 ${RARITY_STYLE[obj.rarity] ?? 'border-gray-600 text-gray-300'}`}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase">{RARITY_LABEL[obj.rarity]}</span>
+                      <span className="font-bold text-sm">+{obj.points} pt</span>
+                    </div>
+                    <p className="font-semibold text-sm">{obj.name}</p>
+                    <p className="text-xs opacity-75">{obj.description}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {generalBonuses.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Bonus generali</p>
+                {generalBonuses.map((bonus, i) => (
+                  <div key={i} className="border border-gray-600 bg-gray-800 rounded-xl px-3 py-2 space-y-0.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-sm text-gray-200">{bonus.name}</span>
+                      <span className="font-bold text-sm text-green-400">+{bonus.points} pt</span>
+                    </div>
+                    <p className="text-xs text-gray-400">{bonus.description}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Banner eventi attivi */}
       {activeEvents.length > 0 && (
         <div className="bg-purple-900/60 border border-purple-500 rounded-2xl px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-purple-300 font-bold text-sm uppercase tracking-wide">
               ⚡ {activeEvents.length > 1 ? `${activeEvents.length} Eventi Attivi` : 'Evento Attivo'}
             </p>
-            <button
-              onClick={() => setShowEventsBanner(v => !v)}
-              className="text-purple-400 hover:text-white text-xs"
-            >
+            <button onClick={() => setShowEventsBanner(v => !v)} className="text-purple-400 hover:text-white text-xs">
               {showEventsBanner ? '▲ chiudi' : '▼ mostra'}
             </button>
           </div>
@@ -457,17 +461,12 @@ export default function GamePage() {
               <p className="text-sm font-semibold text-orange-400">🧑‍🔧 Scugnizzu</p>
               <p className="text-xs text-gray-400">+30 crediti ora, -15 punti a fine partita</p>
             </div>
-            <button
-              onClick={handleScugnizzu}
-              disabled={scugnizzuLoading}
-              className="bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white font-bold text-sm px-4 py-2 rounded-xl transition"
-            >
+            <button onClick={handleScugnizzu} disabled={scugnizzuLoading}
+              className="bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white font-bold text-sm px-4 py-2 rounded-xl transition">
               {scugnizzuLoading ? '...' : 'Usa'}
             </button>
           </div>
-          {scugnizzuMessage && (
-            <p className="text-xs text-orange-300">{scugnizzuMessage}</p>
-          )}
+          {scugnizzuMessage && <p className="text-xs text-orange-300">{scugnizzuMessage}</p>}
         </div>
       )}
 
@@ -476,10 +475,7 @@ export default function GamePage() {
         <div className="bg-gray-900 rounded-2xl p-6 text-center space-y-4">
           <p className="text-gray-400">In attesa del prossimo bene...</p>
           {myPlayer?.isHost && (
-            <button
-              onClick={handleNextAuction}
-              className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 transition"
-            >
+            <button onClick={handleNextAuction} className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 transition">
               🔨 Avvia prossima asta
             </button>
           )}
@@ -494,77 +490,51 @@ export default function GamePage() {
             <h2 className="text-2xl font-bold">{auction.good.name}</h2>
             <p className="text-yellow-400 font-semibold">Valore base: {auction.good.baseValue} pt</p>
           </div>
-
           <div className="text-center">
             <span className={`text-4xl font-mono font-bold ${timerColor}`}>{timeLeft}s</span>
           </div>
-
           {!hasBid ? (
             <div className="space-y-3">
               {myPlayer && !myPlayer.usedMercatoNero && (
-                <button
-                  onClick={() => setUseMercatoNero(v => !v)}
+                <button onClick={() => setUseMercatoNero(v => !v)}
                   className={`w-full py-2 rounded-xl text-sm font-medium transition border ${
-                    useMercatoNero
-                      ? 'bg-red-600 border-red-500 text-white'
-                      : 'bg-gray-800 border-gray-600 text-gray-300 hover:border-red-500'
-                  }`}
-                >
+                    useMercatoNero ? 'bg-red-600 border-red-500 text-white' : 'bg-gray-800 border-gray-600 text-gray-300 hover:border-red-500'
+                  }`}>
                   {useMercatoNero ? '🔴 Mercato Nero ATTIVO — clicca per annullare' : '🕵️ Usa Mercato Nero'}
                 </button>
               )}
-
               {!useMercatoNero && (
-                <input
-                  type="number"
-                  min={0}
-                  max={myPlayer?.credits}
-                  placeholder="La tua offerta"
-                  value={bidAmount}
+                <input type="number" min={0} max={myPlayer?.credits} placeholder="La tua offerta" value={bidAmount}
                   onChange={e => setBidAmount(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleBid()}
                   className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
                 />
               )}
-
               {useMercatoNero && (
                 <p className="text-red-300 text-xs text-center">Con Mercato Nero non devi inserire un&apos;offerta — vincerai pagando l&apos;offerta più alta + 1.</p>
               )}
-
               {bidError && <p className="text-red-400 text-sm">{bidError}</p>}
-
-              <button
-                onClick={handleBid}
-                disabled={bidLoading || (!useMercatoNero && !bidAmount)}
-                className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 disabled:opacity-50 transition"
-              >
+              <button onClick={handleBid} disabled={bidLoading || (!useMercatoNero && !bidAmount)}
+                className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 disabled:opacity-50 transition">
                 {bidLoading ? 'Invio...' : useMercatoNero ? '🕵️ Dichiara Mercato Nero' : '✅ Conferma Offerta'}
               </button>
             </div>
           ) : (
             <div className="text-center space-y-2">
-              <p className="text-green-400 font-semibold">
-                {useMercatoNero ? '🕵️ Mercato Nero dichiarato!' : '✅ Offerta inviata!'}
-              </p>
+              <p className="text-green-400 font-semibold">{useMercatoNero ? '🕵️ Mercato Nero dichiarato!' : '✅ Offerta inviata!'}</p>
               <p className="text-gray-400 text-sm">In attesa degli altri giocatori...</p>
             </div>
           )}
-
           {myPlayer?.isHost && (
             <div className="space-y-2 mt-2">
               <div className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2">
                 <span className="text-gray-400 text-sm">Offerte ricevute</span>
                 <span className="font-bold text-white">
                   {confirmedCount} / {totalPlayers}
-                  {confirmedCount === totalPlayers && totalPlayers > 0 && (
-                    <span className="ml-2 text-green-400 text-xs">✓ tutti</span>
-                  )}
+                  {confirmedCount === totalPlayers && totalPlayers > 0 && <span className="ml-2 text-green-400 text-xs">✓ tutti</span>}
                 </span>
               </div>
-              <button
-                onClick={handleReveal}
-                className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 transition"
-              >
+              <button onClick={handleReveal} className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 transition">
                 👁 Rivela Offerte
               </button>
             </div>
@@ -579,31 +549,21 @@ export default function GamePage() {
             <h2 className="text-xl font-bold">{auction.good.name}</h2>
             <p className="text-gray-400 text-sm">Risultato asta</p>
           </div>
-
           {winnerId ? (
             <div className={`border rounded-xl px-4 py-3 text-center ${
-              mercatoNeroWinner
-                ? 'bg-red-900/40 border-red-500'
-                : 'bg-yellow-400/10 border-yellow-400'
+              mercatoNeroWinner ? 'bg-red-900/40 border-red-500' : 'bg-yellow-400/10 border-yellow-400'
             }`}>
-              {mercatoNeroWinner && (
-                <p className="text-red-400 text-xs font-bold uppercase tracking-widest mb-1">🕵️ Vinto con Mercato Nero</p>
-              )}
-              <p className={`font-bold text-lg ${
-                mercatoNeroWinner ? 'text-red-300' : 'text-yellow-400'
-              }`}>
+              {mercatoNeroWinner && <p className="text-red-400 text-xs font-bold uppercase tracking-widest mb-1">🕵️ Vinto con Mercato Nero</p>}
+              <p className={`font-bold text-lg ${mercatoNeroWinner ? 'text-red-300' : 'text-yellow-400'}`}>
                 🏆 {players.find(p => p.id === winnerId)?.name ?? 'Vincitore'}
               </p>
-              <p className="text-gray-300 text-sm">
-                ha vinto pagando <span className="font-bold text-white">{winningBid} crediti</span>
-              </p>
+              <p className="text-gray-300 text-sm">ha vinto pagando <span className="font-bold text-white">{winningBid} crediti</span></p>
             </div>
           ) : (
             <div className="bg-gray-800 rounded-xl px-4 py-3 text-center">
               <p className="text-gray-400">🤝 {resultDetails}</p>
             </div>
           )}
-
           <ul className="space-y-2">
             {revealedBids.map(bid => (
               <li key={bid.playerId} className={`flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2 ${
@@ -618,18 +578,12 @@ export default function GamePage() {
               </li>
             ))}
           </ul>
-
           {myPlayer?.isHost && (
-            <button
-              onClick={handleClose}
-              className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 transition"
-            >
+            <button onClick={handleClose} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 transition">
               ➡️ Prossimo bene
             </button>
           )}
-          {!myPlayer?.isHost && (
-            <p className="text-center text-gray-500 text-sm">In attesa che l&apos;host continui...</p>
-          )}
+          {!myPlayer?.isHost && <p className="text-center text-gray-500 text-sm">In attesa che l&apos;host continui...</p>}
         </div>
       )}
 
@@ -650,7 +604,6 @@ export default function GamePage() {
                 </span>
                 <span className="text-gray-400">💰 {p.credits}</span>
               </button>
-
               {openHistoryPlayerId === p.id && (
                 <div className="mt-1 ml-2 mb-2 space-y-1">
                   {(goodsHistory[p.id] ?? []).length === 0 ? (

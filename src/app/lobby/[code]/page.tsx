@@ -42,7 +42,7 @@ export default function LobbyPage() {
   const [myPlayer, setMyPlayer] = useState<Player | null>(null);
   const [playerName, setPlayerName] = useState('');
   const [joined, setJoined] = useState(false);
-  const [loading, setLoading] = useState(true); // parte true: stiamo verificando la sala
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [gameNotFound, setGameNotFound] = useState(false);
@@ -52,14 +52,16 @@ export default function LobbyPage() {
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [totalTurns, setTotalTurns] = useState<number>(0);
 
+  // Obiettivi: quanti comuni e rari vuole l'host
+  const [commonCount, setCommonCount] = useState(2);
+  const [rareCount, setRareCount] = useState(1);
+
   const autoJoinCalled = useRef(false);
 
-  // Beni selezionati live
   const liveItemCount = allCategories
     .filter(c => selectedCategoryIds.includes(c.id))
     .reduce((acc, c) => acc + c.itemCount, 0);
 
-  // Carica categorie con itemCount; seleziona tutto di default
   useEffect(() => {
     fetch('/api/categories')
       .then(r => r.json())
@@ -72,7 +74,6 @@ export default function LobbyPage() {
       .catch(() => {});
   }, []);
 
-  // Carica categorie già salvate per questa partita (rejoin)
   useEffect(() => {
     if (!joined) return;
     fetch(`/api/games/${code}/categories`)
@@ -86,51 +87,25 @@ export default function LobbyPage() {
       .catch(() => {});
   }, [joined, code]);
 
-  // Verifica esistenza sala + eventuale auto-join
   useEffect(() => {
     if (autoJoinCalled.current) return;
 
     async function init() {
-      // Controlla se la sala esiste
       const res = await fetch(`/api/games/${code}`);
-      if (!res.ok) {
-        setGameNotFound(true);
-        setLoading(false);
-        return;
-      }
+      if (!res.ok) { setGameNotFound(true); setLoading(false); return; }
       const data = await res.json();
-      if (!data.game) {
-        setGameNotFound(true);
-        setLoading(false);
-        return;
-      }
+      if (!data.game) { setGameNotFound(true); setLoading(false); return; }
       if (data.game.status === 'active') {
-        // Partita già iniziata
         const session = loadSession(code);
         if (session) { router.push(`/game/${code}`); return; }
-        setGameNotFound(true); // non puoi entrare a partita avviata
-        setLoading(false);
-        return;
+        setGameNotFound(true); setLoading(false); return;
       }
-
-      // Sala valida in lobby
       const session = loadSession(code);
-      if (session) {
-        autoJoinCalled.current = true;
-        await rejoinGame(session);
-        return;
-      }
+      if (session) { autoJoinCalled.current = true; await rejoinGame(session); return; }
       const nameFromUrl = searchParams.get('name');
-      if (nameFromUrl) {
-        autoJoinCalled.current = true;
-        await joinGame(nameFromUrl);
-        return;
-      }
-
-      // Nessun auto-join: mostra il form
+      if (nameFromUrl) { autoJoinCalled.current = true; await joinGame(nameFromUrl); return; }
       setLoading(false);
     }
-
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -139,7 +114,6 @@ export default function LobbyPage() {
     if (!joined) return;
     const pusher = getPusherClient();
     const channel = pusher.subscribe(`game-${code}`);
-
     channel.bind('player-joined', (data: { players: Player[] }) => setPlayers(data.players));
     channel.bind('player-left', (data: { players: Player[] }) => {
       setPlayers(data.players);
@@ -156,7 +130,6 @@ export default function LobbyPage() {
       setSelectedCategoryIds(data.selectedCategoryIds);
       setTotalTurns(data.totalTurns);
     });
-
     return () => { channel.unbind_all(); pusher.unsubscribe(`game-${code}`); };
   }, [joined, code, router]);
 
@@ -164,41 +137,26 @@ export default function LobbyPage() {
     setLoading(true);
     const res = await fetch(`/api/games/${code}`);
     const data = await res.json();
-
     if (!res.ok || data.game?.status !== 'lobby') {
       if (data.game?.status === 'active') { router.push(`/game/${code}`); return; }
-      clearSession(code);
-      setLoading(false);
-      return;
+      clearSession(code); setLoading(false); return;
     }
-
     const stillIn = data.players?.find((p: Player) => p.id === session.id);
     if (!stillIn) { clearSession(code); setLoading(false); return; }
-
-    setMyPlayer(stillIn);
-    setPlayers(data.players);
-    setJoined(true);
-    setLoading(false);
+    setMyPlayer(stillIn); setPlayers(data.players); setJoined(true); setLoading(false);
   }
 
   async function joinGame(name: string) {
-    setLoading(true);
-    setError('');
-
+    setLoading(true); setError('');
     const res = await fetch(`/api/games/${code}/players`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ playerName: name.trim() }),
     });
-
     const data = await res.json();
     if (!res.ok) { setError(data.error); setLoading(false); return; }
-
     saveSession(code, data.player);
-    setMyPlayer(data.player);
-    setPlayers(data.allPlayers);
-    setJoined(true);
-    setLoading(false);
+    setMyPlayer(data.player); setPlayers(data.allPlayers); setJoined(true); setLoading(false);
   }
 
   async function handleJoin() {
@@ -219,6 +177,7 @@ export default function LobbyPage() {
       alert('Seleziona almeno una categoria prima di avviare la partita!');
       return;
     }
+    // Salva categorie
     const resCat = await fetch(`/api/games/${code}/categories`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -229,10 +188,11 @@ export default function LobbyPage() {
       alert(d.error ?? 'Errore nel salvare le categorie');
       return;
     }
+    // Avvia partita passando anche commonCount e rareCount
     await fetch(`/api/games/${code}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'active' }),
+      body: JSON.stringify({ status: 'active', commonObjectivesCount: commonCount, rareObjectivesCount: rareCount }),
     });
   }
 
@@ -276,10 +236,7 @@ export default function LobbyPage() {
           <p className="text-gray-400 text-sm">
             Il codice <span className="font-mono text-yellow-400">{code}</span> non corrisponde a nessuna partita attiva.
           </p>
-          <button
-            onClick={() => router.push('/')}
-            className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 transition"
-          >
+          <button onClick={() => router.push('/')} className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 transition">
             Torna alla home
           </button>
         </div>
@@ -294,21 +251,15 @@ export default function LobbyPage() {
           <h1 className="text-2xl font-bold mb-2">Unisciti alla partita</h1>
           <p className="text-gray-400 mb-6">Codice sala: <span className="font-mono text-yellow-400 text-lg">{code}</span></p>
           <input
-            type="text"
-            placeholder="Il tuo nome"
-            value={playerName}
+            type="text" placeholder="Il tuo nome" value={playerName}
             onChange={e => setPlayerName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleJoin()}
             className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 mb-4 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-            maxLength={20}
-            autoFocus
+            maxLength={20} autoFocus
           />
           {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
-          <button
-            onClick={handleJoin}
-            disabled={loading || !playerName.trim()}
-            className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 disabled:opacity-50 transition"
-          >
+          <button onClick={handleJoin} disabled={loading || !playerName.trim()}
+            className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 disabled:opacity-50 transition">
             {loading ? 'Entrando...' : 'Entra'}
           </button>
         </div>
@@ -353,36 +304,62 @@ export default function LobbyPage() {
           </ul>
         </div>
 
-        {/* Selezione categorie — solo host */}
+        {/* Selezione categorie + obiettivi — solo host */}
         {myPlayer?.isHost && (
-          <div className="bg-gray-800 rounded-xl p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-sm text-gray-300">🗂 Categorie di gioco</h2>
-              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400">
-                {liveItemCount} beni · {selectedCategoryIds.length} cat.
-              </span>
+          <div className="space-y-3">
+            {/* Categorie */}
+            <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold text-sm text-gray-300">🗂 Categorie di gioco</h2>
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400">
+                  {liveItemCount} beni · {selectedCategoryIds.length} cat.
+                </span>
+              </div>
+              {allCategories.length === 0 ? (
+                <p className="text-gray-500 text-xs">Caricamento categorie...</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  {allCategories.map(cat => (
+                    <button
+                      key={cat.id}
+                      onClick={() => toggleCategory(cat.id)}
+                      className={`text-left px-3 py-2 rounded-lg text-sm font-medium transition border ${
+                        selectedCategoryIds.includes(cat.id)
+                          ? 'bg-yellow-400 text-gray-950 border-yellow-400'
+                          : 'bg-gray-700 text-gray-300 border-gray-600 hover:border-yellow-400'
+                      }`}
+                    >
+                      <span className="block truncate">{selectedCategoryIds.includes(cat.id) ? '✓ ' : ''}{cat.name}</span>
+                      <span className="block text-xs opacity-60 mt-0.5">{cat.itemCount} beni</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {allCategories.length === 0 ? (
-              <p className="text-gray-500 text-xs">Caricamento categorie...</p>
-            ) : (
-              <div className="grid grid-cols-2 gap-2">
-                {allCategories.map(cat => (
-                  <button
-                    key={cat.id}
-                    onClick={() => toggleCategory(cat.id)}
-                    className={`text-left px-3 py-2 rounded-lg text-sm font-medium transition border ${
-                      selectedCategoryIds.includes(cat.id)
-                        ? 'bg-yellow-400 text-gray-950 border-yellow-400'
-                        : 'bg-gray-700 text-gray-300 border-gray-600 hover:border-yellow-400'
-                    }`}
-                  >
-                    <span className="block truncate">{selectedCategoryIds.includes(cat.id) ? '✓ ' : ''}{cat.name}</span>
-                    <span className="block text-xs opacity-60 mt-0.5">{cat.itemCount} beni</span>
-                  </button>
-                ))}
+            {/* Obiettivi per giocatore */}
+            <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+              <h2 className="font-semibold text-sm text-gray-300">🎯 Obiettivi per giocatore</h2>
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-gray-400 w-24">Comuni</label>
+                <input
+                  type="number" min={0} max={10} value={commonCount}
+                  onChange={e => setCommonCount(Math.max(0, Math.min(10, Number(e.target.value))))}
+                  className="w-16 bg-gray-700 rounded-lg px-2 py-1 text-white text-center text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                />
+                <span className="text-xs text-gray-500">per giocatore</span>
               </div>
-            )}
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-gray-400 w-24">Rari</label>
+                <input
+                  type="number" min={0} max={10} value={rareCount}
+                  onChange={e => setRareCount(Math.max(0, Math.min(10, Number(e.target.value))))}
+                  className="w-16 bg-gray-700 rounded-lg px-2 py-1 text-white text-center text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                />
+                <span className="text-xs text-gray-500">per giocatore</span>
+              </div>
+              <p className="text-xs text-gray-500">Ogni giocatore riceverà {commonCount} obiettivo{commonCount !== 1 ? 'i' : ''} comune{commonCount !== 1 ? 'i' : ''} e {rareCount} raro{rareCount !== 1 ? 'i' : ''} assegnati casualmente.</p>
+            </div>
           </div>
         )}
 
