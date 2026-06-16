@@ -18,14 +18,15 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const upperCode = code.toUpperCase();
   const body = await request.json();
-  const db = drizzle(neon(process.env.DATABASE_URL!));
+  const sql = neon(process.env.DATABASE_URL!);
+  const db = drizzle(sql);
 
   const [game] = await db.select().from(games).where(eq(games.code, upperCode));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
 
   const [caller] = await db.select().from(players).where(eq(players.id, body.playerId));
   if (!caller || caller.gameId !== game.id || !caller.isHost)
-    return NextResponse.json({ error: 'Solo l\'host può rivelare le offerte' }, { status: 403 });
+    return NextResponse.json({ error: "Solo l'host può rivelare le offerte" }, { status: 403 });
 
   const [auction] = await db
     .select()
@@ -71,13 +72,8 @@ export async function POST(request: NextRequest, { params }: Ctx) {
       wonAtTurn: auction.turn,
     });
 
-    await db
-      .update(players)
-      .set({ credits: db.$dynamic ? undefined : undefined }) // placeholder — vedi sotto
-      .where(eq(players.id, result.winnerId));
-
     // Scala crediti con SQL raw per evitare race condition
-    await neon(process.env.DATABASE_URL!)`
+    await sql`
       UPDATE players SET credits = credits - ${result.winningBid} WHERE id = ${result.winnerId}
     `;
 
