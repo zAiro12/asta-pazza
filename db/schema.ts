@@ -51,6 +51,9 @@ export const games = pgTable('games', {
   currentTurn: integer('current_turn').notNull().default(0),
   totalTurns: integer('total_turns').notNull().default(0),
   activeEventIds: jsonb('active_event_ids').notNull().default('[]'), // int[]
+  // Quanti obiettivi comuni e rari riceve ogni giocatore (impostabili dall'host)
+  commonObjectivesCount: integer('common_objectives_count').notNull().default(1),
+  rareObjectivesCount: integer('rare_objectives_count').notNull().default(1),
   createdAt: timestamp('created_at').defaultNow(),
   finishedAt: timestamp('finished_at'),
 });
@@ -108,4 +111,16 @@ export const playerObjectives = pgTable('player_objectives', {
   playerId: integer('player_id').references(() => players.id).notNull(),
   gameId: integer('game_id').references(() => games.id).notNull(),
   objectiveId: integer('objective_id').references(() => objectives.id).notNull(),
+});
+
+// ─── Obiettivi assegnati ──────────────────────────────────────────────────────
+// Traccia quale obiettivo (comune/raro/categoria_base) è stato assegnato a quale
+// giocatore all'avvio della partita. È la sorgente di verità per la visibilità
+// privata: ogni giocatore vede solo i propri.
+export const playerObjectiveAssignments = pgTable('player_objective_assignments', {
+  id: serial('id').primaryKey(),
+  playerId: integer('player_id').references(() => players.id).notNull(),
+  gameId: integer('game_id').references(() => games.id).notNull(),
+  objectiveId: integer('objective_id').references(() => objectives.id).notNull(),
+  type: objectiveTypeEnum('type').notNull(), // replica del tipo per query rapide
 });
