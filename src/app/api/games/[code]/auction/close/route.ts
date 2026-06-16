@@ -1,6 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
-import { games, players, auctions, objectives, playerObjectives, playerGoods, goods } from '@db/schema';
+import { games, players, auctions, objectives, playerObjectives, playerGoods, goods, playerObjectiveAssignments } from '@db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
@@ -13,8 +13,8 @@ type Ctx = { params: Promise<{ code: string }> };
 /**
  * POST /api/games/[code]/auction/close
  * Host chiude la fase revealing e prepara il turno successivo.
- * Se è l'ultimo turno: mette la partita in stato finished,
- * valuta automaticamente gli obiettivi e fa broadcast game-finished.
+ * Ad ogni turno aggiorna progressivamente player_objectives per gli obiettivi assegnati al giocatore.
+ * Se è l'ultimo turno: mette la partita in stato finished e fa broadcast game-finished.
  * Body: { playerId: number }
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
@@ -37,7 +37,6 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     .limit(1);
   if (!auction) return NextResponse.json({ error: 'Nessuna asta in fase revealing' }, { status: 409 });
 
-  // Carica il bene dell'asta per includerne il nome nel payload
   const [auctionGood] = await db.select().from(goods).where(eq(goods.id, auction.goodId));
 
   // Chiudi l'asta corrente
@@ -46,17 +45,16 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     .set({ status: 'finished', finishedAt: new Date() })
     .where(eq(auctions.id, auction.id));
 
+  // Aggiorna progressivamente gli obiettivi completati per tutti i giocatori
+  await evaluateAndSaveObjectives(db, game.id, game.selectedCategoryIds as number[]);
+
   const isLastTurn = auction.turn >= game.totalTurns;
 
   if (isLastTurn) {
-    // Fine partita
     await db
       .update(games)
       .set({ status: 'finished', finishedAt: new Date() })
       .where(eq(games.id, game.id));
-
-    // Valuta obiettivi automaticamente
-    await evaluateAndSaveObjectives(db, game.id, game.selectedCategoryIds as number[]);
 
     await pusherServer.trigger(`game-${upperCode}`, 'game-finished', {
       gameId: game.id,
@@ -65,7 +63,20 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     return NextResponse.json({ ok: true, finished: true });
   }
 
-  // Turno normale — includi goodName e winnerId per aggiornare lo storico beni nel client
+  // Carica lo stato aggiornato degli obiettivi per il broadcast
+  const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
+  const allCompletedObjectives = await db
+    .select()
+    .from(playerObjectives)
+    .where(eq(playerObjectives.gameId, game.id));
+
+  // Mappa playerId -> [objectiveId completati]
+  const completedByPlayer: Record<number, number[]> = {};
+  for (const row of allCompletedObjectives) {
+    if (!completedByPlayer[row.playerId]) completedByPlayer[row.playerId] = [];
+    completedByPlayer[row.playerId].push(row.objectiveId);
+  }
+
   await pusherServer.trigger(`game-${upperCode}`, 'auction-closed', {
     auctionId: auction.id,
     turn: auction.turn,
@@ -74,12 +85,17 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     goodName: auctionGood?.name ?? '',
     winnerId: auction.winnerId ?? null,
     winningBid: auction.winningBid ?? 0,
+    completedObjectivesByPlayer: completedByPlayer,
   });
 
   return NextResponse.json({ ok: true, finished: false });
 }
 
-/** Valuta e salva in player_objectives tutti gli obiettivi completati. Idempotente. */
+/**
+ * Valuta e salva in player_objectives tutti gli obiettivi ASSEGNATI completati.
+ * Considera solo gli obiettivi assegnati al giocatore in questa partita (playerObjectiveAssignments).
+ * Idempotente.
+ */
 async function evaluateAndSaveObjectives(
   db: ReturnType<typeof drizzle>,
   gameId: number,
@@ -103,15 +119,15 @@ async function evaluateAndSaveObjectives(
   }
 
   const rawObjectives = await db.select().from(objectives);
-  const allObjectives: ObjectiveRow[] = rawObjectives.map(o => ({
-    id: o.id,
-    name: o.name,
-    type: o.type,
-    description: o.description,
-    rewardPoints: o.points,
-    condition: (o.condition as any) ?? null,
-  }));
+  const allObjectivesMap = new Map(rawObjectives.map(o => [o.id, o]));
 
+  // Carica gli obiettivi assegnati per ogni giocatore in questa partita
+  const allAssignments = await db
+    .select()
+    .from(playerObjectiveAssignments)
+    .where(eq(playerObjectiveAssignments.gameId, gameId));
+
+  // Obiettivi già salvati come completati (per idempotenza)
   const existing = await db
     .select()
     .from(playerObjectives)
@@ -143,11 +159,33 @@ async function evaluateAndSaveObjectives(
       goods: myGoods,
     };
 
-    const completedIds = getCompletedObjectiveIds(pwg, allObjectives, goodsInCategory);
+    // Solo obiettivi assegnati a questo giocatore
+    const assignedObjectiveIds = allAssignments
+      .filter(a => a.playerId === player.id)
+      .map(a => a.objectiveId);
+
+    const assignedObjectives: ObjectiveRow[] = assignedObjectiveIds
+      .map(id => {
+        const o = allObjectivesMap.get(id);
+        if (!o) return null;
+        return {
+          id: o.id,
+          name: o.name,
+          type: o.type,
+          description: o.description,
+          rewardPoints: o.points,
+          condition: (o.condition as any) ?? null,
+        };
+      })
+      .filter(Boolean) as ObjectiveRow[];
+
+    const completedIds = getCompletedObjectiveIds(pwg, assignedObjectives, goodsInCategory);
+
     for (const objectiveId of completedIds) {
       const key = `${player.id}_${objectiveId}`;
       if (!existingKeys.has(key)) {
         toInsert.push({ playerId: player.id, gameId, objectiveId });
+        existingKeys.add(key); // previeni duplicati nello stesso batch
       }
     }
   }
