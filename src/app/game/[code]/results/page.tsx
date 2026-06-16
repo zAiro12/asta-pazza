@@ -20,8 +20,11 @@ interface Objective {
 
 interface Score {
   goods: number;
-  collections: number;
-  majority: number;
+  baseCategoryBonus: number;
+  eventModifiers: number;
+  miniCollections: number;
+  completeCollections: number;
+  majorityBonus: number;
   objectives: number;
   credits: number;
   scugnizzuPenalty: number;
@@ -132,22 +135,42 @@ export default function ResultsPage() {
                     <span className="text-gray-300">Beni</span>
                     <span className="font-bold">{r.score.goods}</span>
                   </div>
-                  {r.score.collections > 0 && (
+                  {r.score.baseCategoryBonus > 0 && (
                     <div className="flex justify-between">
-                      <span className="text-gray-300">Bonus collezioni</span>
-                      <span className="font-bold text-green-400">+{r.score.collections}</span>
+                      <span className="text-gray-300">Bonus categoria base</span>
+                      <span className="font-bold text-yellow-400">+{r.score.baseCategoryBonus}</span>
                     </div>
                   )}
-                  {r.score.majority > 0 && (
+                  {r.score.miniCollections > 0 && (
                     <div className="flex justify-between">
-                      <span className="text-gray-300">Bonus maggioranza</span>
-                      <span className="font-bold text-green-400">+{r.score.majority}</span>
+                      <span className="text-gray-300">Mini-Collezioni</span>
+                      <span className="font-bold text-green-400">+{r.score.miniCollections}</span>
+                    </div>
+                  )}
+                  {r.score.completeCollections > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-300">Collezioni Complete</span>
+                      <span className="font-bold text-green-400">+{r.score.completeCollections}</span>
+                    </div>
+                  )}
+                  {r.score.majorityBonus > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-300">Bonus Maggioranza</span>
+                      <span className="font-bold text-green-400">+{r.score.majorityBonus}</span>
                     </div>
                   )}
                   {r.score.objectives > 0 && (
                     <div className="flex justify-between">
                       <span className="text-gray-300">Obiettivi</span>
                       <span className="font-bold text-blue-400">+{r.score.objectives}</span>
+                    </div>
+                  )}
+                  {r.score.eventModifiers !== 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-300">Modificatori eventi</span>
+                      <span className={`font-bold ${r.score.eventModifiers >= 0 ? 'text-purple-400' : 'text-red-400'}`}>
+                        {r.score.eventModifiers >= 0 ? '+' : ''}{r.score.eventModifiers}
+                      </span>
                     </div>
                   )}
                   <div className="flex justify-between">
