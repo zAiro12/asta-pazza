@@ -16,12 +16,16 @@ interface CollectionState {
 
 /**
  * Calcola il punteggio completo di un giocatore.
- * Tiene conto degli eventi attivi e dei bonus generali.
+ * @param player - Il giocatore con i suoi beni
+ * @param allPlayers - Tutti i giocatori della partita (per il calcolo della maggioranza)
+ * @param activeEvents - Lista degli eventi permanenti attivi
+ * @param completedObjectivesPoints - Somma dei punti degli obiettivi completati dal giocatore (calcolata esternamente)
  */
 export function calculateScore(
   player: PlayerWithGoods,
   allPlayers: PlayerWithGoods[],
   activeEvents: GameEvent[],
+  completedObjectivesPoints = 0,
 ): ScoreBreakdown {
   const goodsPerCategory = groupByCategory(player.goods.map(g => g.categoryId));
   const allPlayersGoodsPerCategory = allPlayers.map(p => groupByCategory(p.goods.map(g => g.categoryId)));
@@ -69,11 +73,9 @@ export function calculateScore(
 
   // Crediti residui
   let creditsMultiplier = 1;
-  let creditsEnabled = true;
   for (const event of activeEvents) {
     const effect = event.effect as EventEffect;
     if (effect.type === 'credits_multiplier') creditsMultiplier = effect.multiplier;
-    if (effect.type === 'collection_nullify' && effect.bonusType === 'mini') creditsEnabled = false;
   }
   // Check specifico Crisi di Fiducia
   const creditsFrozen = activeEvents.some(e => (e.effect as any).type === 'credits_freeze');
@@ -82,8 +84,8 @@ export function calculateScore(
   // Penalità Scugnizzu
   const scugnizzuPenalty = player.usedScugnizzu ? SCUGNIZZU_PENALTY : 0;
 
-  // TODO: obiettivi (calcolati separatamente)
-  const objectives = 0;
+  // Obiettivi: ricevuti come parametro già calcolato
+  const objectives = completedObjectivesPoints;
 
   const total =
     goodsValue +

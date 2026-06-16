@@ -11,6 +11,7 @@ type Ctx = { params: Promise<{ code: string }> };
 /**
  * GET /api/games/[code]/results
  * Ritorna la classifica finale con punteggi dettagliati calcolati da scoring.ts.
+ * Gli obiettivi completati vengono letti da player_objectives e passati a calculateScore.
  */
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { code } = await params;
@@ -29,12 +30,21 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     .innerJoin(goods, eq(playerGoods.goodId, goods.id))
     .where(eq(playerGoods.gameId, game.id));
 
-  // Obiettivi completati per ogni giocatore
+  // Obiettivi completati per ogni giocatore (già scritti da evaluate-objectives)
   const allPlayerObjectives = await db
     .select({ po: playerObjectives, obj: objectives })
     .from(playerObjectives)
     .innerJoin(objectives, eq(playerObjectives.objectiveId, objectives.id))
     .where(eq(playerObjectives.gameId, game.id));
+
+  // Mappa playerId -> punti totali obiettivi
+  const objectivePointsByPlayer = new Map<number, number>();
+  for (const { po, obj } of allPlayerObjectives) {
+    objectivePointsByPlayer.set(
+      po.playerId,
+      (objectivePointsByPlayer.get(po.playerId) ?? 0) + obj.points,
+    );
+  }
 
   // Eventi attivi (permanenti) della partita
   const activeEventIds = (game.activeEventIds ?? []) as number[];
@@ -79,13 +89,11 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   });
 
   const results = playersWithGoods.map(player => {
-    const breakdown = calculateScore(player, playersWithGoods, activeEvents);
+    // Punti obiettivi completati per questo giocatore
+    const objectivesPoints = objectivePointsByPlayer.get(player.id) ?? 0;
 
-    const myObjectives = allPlayerObjectives.filter(r => r.po.playerId === player.id);
-    const objectivesScore = myObjectives.reduce((sum, { obj }) => sum + obj.points, 0);
-
-    // Override obiettivi (scoring.ts ha TODO: 0 — usiamo quelli da DB)
-    const total = breakdown.total + objectivesScore;
+    // calculateScore ora riceve i punti obiettivi e li integra nel total
+    const breakdown = calculateScore(player, playersWithGoods, activeEvents, objectivesPoints);
 
     return {
       player: {
@@ -104,11 +112,13 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
           pricePaid: pg.pricePaid,
           hasBaseBonus: player.baseCategoryId === good.categoryId,
         })),
-      objectives: myObjectives.map(({ obj }) => ({
-        id: obj.id,
-        name: obj.name,
-        points: obj.points,
-      })),
+      objectives: allPlayerObjectives
+        .filter(r => r.po.playerId === player.id)
+        .map(({ obj }) => ({
+          id: obj.id,
+          name: obj.name,
+          points: obj.points,
+        })),
       score: {
         goods: breakdown.goodsValue,
         baseCategoryBonus: breakdown.baseCategoryBonus,
@@ -116,10 +126,10 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
         miniCollections: breakdown.miniCollections,
         completeCollections: breakdown.completeCollections,
         majorityBonus: breakdown.majorityBonus,
-        objectives: objectivesScore,
+        objectives: breakdown.objectives,
         credits: breakdown.residualCredits,
         scugnizzuPenalty: breakdown.scugnizzuPenalty,
-        total,
+        total: breakdown.total,
       },
     };
   });
