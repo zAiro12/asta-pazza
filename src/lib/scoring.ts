@@ -19,7 +19,7 @@ interface CollectionState {
  * @param player - Il giocatore con i suoi beni
  * @param allPlayers - Tutti i giocatori della partita (per il calcolo della maggioranza)
  * @param activeEvents - Lista degli eventi permanenti attivi
- * @param completedObjectivesPoints - Somma dei punti degli obiettivi completati dal giocatore (calcolata esternamente)
+ * @param completedObjectivesPoints - Somma dei punti degli obiettivi completati (calcolata esternamente)
  */
 export function calculateScore(
   player: PlayerWithGoods,
@@ -30,17 +30,21 @@ export function calculateScore(
   const goodsPerCategory = groupByCategory(player.goods.map(g => g.categoryId));
   const allPlayersGoodsPerCategory = allPlayers.map(p => groupByCategory(p.goods.map(g => g.categoryId)));
 
-  // Modifica valori beni per eventi
+  // --- Valore beni + bonus categoria base + modificatori eventi ---
   let goodsValue = 0;
   let baseCategoryBonus = 0;
   let eventModifiers = 0;
 
+  // category_merge: costruiamo una mappa categoryId -> categoryId "canonica"
+  const mergeMap = buildCategoryMergeMap(activeEvents);
+
   for (const good of player.goods) {
     let value = good.baseValue;
 
-    // Applica eventi permanenti che modificano valore beni
+    // Applica eventi permanenti che modificano il valore dei beni
     for (const event of activeEvents) {
       const effect = event.effect as EventEffect;
+
       if (effect.type === 'category_bonus' && effect.categoryName === good.categoryName) {
         value += effect.delta;
         eventModifiers += effect.delta;
@@ -58,33 +62,62 @@ export function calculateScore(
           eventModifiers += effect.delta;
         }
       }
+      // secret_category_bonus: bonus su una categoria non rivelata a inizio turno,
+      // rivelata a fine partita — applicato qui con la categoryName del bene
+      if (effect.type === 'secret_category_bonus' && 'categoryName' in effect && (effect as any).categoryName === good.categoryName) {
+        value += effect.delta;
+        eventModifiers += effect.delta;
+      }
     }
 
     goodsValue += value;
 
-    // Bonus categoria base
-    if (good.categoryId === player.baseCategoryId) {
+    // Bonus categoria base (+10 per ogni bene della propria categoria)
+    // Nota: category_merge può allargare la categoria base del giocatore
+    const effectiveCategoryId = mergeMap.get(good.categoryId) ?? good.categoryId;
+    const effectiveBaseId = player.baseCategoryId
+      ? (mergeMap.get(player.baseCategoryId) ?? player.baseCategoryId)
+      : null;
+    if (effectiveBaseId !== null && effectiveCategoryId === effectiveBaseId) {
       baseCategoryBonus += BASE_CATEGORY_BONUS;
     }
   }
 
-  // Collezioni
-  const collections = calculateCollections(goodsPerCategory, allPlayersGoodsPerCategory, activeEvents);
+  // --- Collezioni (con merge) ---
+  // Ricalcola goodsPerCategory rispettando i merge
+  const mergedPlayerCats = groupByCategoryWithMerge(player.goods.map(g => g.categoryId), mergeMap);
+  const mergedAllPlayerCats = allPlayers.map(p =>
+    groupByCategoryWithMerge(p.goods.map(g => g.categoryId), mergeMap)
+  );
+  const collections = calculateCollections(mergedPlayerCats, mergedAllPlayerCats, activeEvents);
 
-  // Crediti residui
+  // --- Crediti residui ---
   let creditsMultiplier = 1;
   for (const event of activeEvents) {
     const effect = event.effect as EventEffect;
     if (effect.type === 'credits_multiplier') creditsMultiplier = effect.multiplier;
   }
-  // Check specifico Crisi di Fiducia
   const creditsFrozen = activeEvents.some(e => (e.effect as any).type === 'credits_freeze');
-  const residualCredits = creditsFrozen ? 0 : Math.floor(player.credits * creditsMultiplier);
+  let residualCredits = creditsFrozen ? 0 : Math.floor(player.credits * creditsMultiplier);
 
-  // Penalità Scugnizzu
+  // credits_penalty_above: penalità se il giocatore ha crediti > soglia
+  for (const event of activeEvents) {
+    const effect = event.effect as EventEffect;
+    if (effect.type === 'credits_penalty_above' && player.credits > effect.threshold) {
+      residualCredits -= effect.penalty;
+      eventModifiers -= effect.penalty;
+    }
+    // credits_bonus_below: bonus se il giocatore ha crediti < soglia
+    if (effect.type === 'credits_bonus_below' && player.credits < effect.threshold) {
+      residualCredits += effect.bonus;
+      eventModifiers += effect.bonus;
+    }
+  }
+
+  // --- Penalità Scugnizzu ---
   const scugnizzuPenalty = player.usedScugnizzu ? SCUGNIZZU_PENALTY : 0;
 
-  // Obiettivi: ricevuti come parametro già calcolato
+  // --- Obiettivi ---
   const objectives = completedObjectivesPoints;
 
   const total =
@@ -111,10 +144,45 @@ export function calculateScore(
   };
 }
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
 function groupByCategory(categoryIds: number[]): Map<number, number> {
   const map = new Map<number, number>();
   for (const id of categoryIds) {
     map.set(id, (map.get(id) ?? 0) + 1);
+  }
+  return map;
+}
+
+/**
+ * Come groupByCategory ma applica il mergeMap prima di raggruppare.
+ * Tutti gli id nella stessa "famiglia" di merge vengono unificati sotto il minore.
+ */
+function groupByCategoryWithMerge(
+  categoryIds: number[],
+  mergeMap: Map<number, number>,
+): Map<number, number> {
+  const map = new Map<number, number>();
+  for (const id of categoryIds) {
+    const canonical = mergeMap.get(id) ?? id;
+    map.set(canonical, (map.get(canonical) ?? 0) + 1);
+  }
+  return map;
+}
+
+/**
+ * Costruisce una mappa categoryId -> canonicalId a partire dagli eventi category_merge attivi.
+ * Le categorie fuse vengono mappate al loro id minimo (canonico).
+ */
+function buildCategoryMergeMap(activeEvents: GameEvent[]): Map<number, number> {
+  const map = new Map<number, number>();
+  for (const event of activeEvents) {
+    const effect = event.effect as EventEffect;
+    if (effect.type === 'category_merge' && Array.isArray((effect as any).categoryIds)) {
+      const ids: number[] = (effect as any).categoryIds;
+      const canonical = Math.min(...ids);
+      for (const id of ids) map.set(id, canonical);
+    }
   }
   return map;
 }
@@ -128,7 +196,6 @@ function calculateCollections(
   let fullBonus = FULL_COLLECTION_POINTS;
   let majorityBonus = MAJORITY_POINTS;
 
-  // Modifica bonus per eventi
   for (const event of activeEvents) {
     const e = event.effect as EventEffect;
     if (e.type === 'collection_bonus') {
@@ -149,9 +216,8 @@ function calculateCollections(
     else if (count === 2) miniCount++;
   }
 
-  // Maggioranza: il giocatore ha il maggior numero di categorie diverse
   const playerCategoryCount = playerCats.size;
-  const maxOtherCount = Math.max(...allPlayerCats.map(m => m.size));
+  const maxOtherCount = Math.max(0, ...allPlayerCats.map(m => m.size));
   const hasMajority = playerCategoryCount > 0 && playerCategoryCount >= maxOtherCount;
 
   return {

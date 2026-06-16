@@ -1,17 +1,17 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import { games, players, auctions, bids, goods, playerGoods, events } from '@db/schema';
-import { eq, inArray, and, notInArray } from 'drizzle-orm';
+import { eq, inArray, and } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
 import { resolveAuction, isEventTurn, AUCTION_TIMER_SECONDS } from '@/lib/auction';
-import type { Bid } from '@/types/game';
+import type { Bid, EventEffect } from '@/types/game';
 
 type Ctx = { params: Promise<{ code: string }> };
 
 function getDb() {
   const sql = neon(process.env.DATABASE_URL!);
-  return drizzle(sql);
+  return { db: drizzle(sql), sql };
 }
 
 /**
@@ -20,7 +20,7 @@ function getDb() {
  */
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { code } = await params;
-  const db = getDb();
+  const { db } = getDb();
 
   const [game] = await db.select().from(games).where(eq(games.code, code.toUpperCase()));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
@@ -47,14 +47,17 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 /**
  * POST /api/games/[code]/auction
  * Host avvia la prossima asta (o la prima).
- * Se è un turno evento, pesca un evento casuale, lo salva e lo invia via Pusher.
+ * Se è un turno evento:
+ *   - permanente  → aggiunto ad activeEventIds
+ *   - istantaneo  → applicato subito (es. instant_credits scala/aggiunge crediti)
+ *   - segreto     → trasmesso ma non attivo permanentemente
  * Body: { playerId: number }
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const upperCode = code.toUpperCase();
   const body = await request.json();
-  const db = getDb();
+  const { db, sql } = getDb();
 
   const [game] = await db.select().from(games).where(eq(games.code, upperCode));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
@@ -62,14 +65,14 @@ export async function POST(request: NextRequest, { params }: Ctx) {
 
   const [caller] = await db.select().from(players).where(eq(players.id, body.playerId));
   if (!caller || caller.gameId !== game.id || !caller.isHost)
-    return NextResponse.json({ error: 'Solo l\'host può avviare le aste' }, { status: 403 });
+    return NextResponse.json({ error: "Solo l'host può avviare le aste" }, { status: 403 });
 
   const [active] = await db
     .select()
     .from(auctions)
     .where(and(eq(auctions.gameId, game.id), inArray(auctions.status, ['bidding', 'revealing'])))
     .limit(1);
-  if (active) return NextResponse.json({ error: 'C\'è già un\'asta in corso' }, { status: 409 });
+  if (active) return NextResponse.json({ error: "C'è già un'asta in corso" }, { status: 409 });
 
   const nextTurn = game.currentTurn + 1;
   if (nextTurn > game.totalTurns) {
@@ -79,7 +82,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   }
 
   // Beni disponibili
-  const categoryIds = (game.selectedCategoryIds as number[]);
+  const categoryIds = game.selectedCategoryIds as number[];
   const allGoods = await db.select().from(goods).where(inArray(goods.categoryId, categoryIds));
 
   const soldGoods = await db
@@ -105,41 +108,53 @@ export async function POST(request: NextRequest, { params }: Ctx) {
 
   const goodToAuction = availableGoods[Math.floor(Math.random() * availableGoods.length)];
 
-  // Gestione evento (turni 10, 20, 30, … e ultimo turno)
+  // ── Gestione evento ─────────────────────────────────────────────────────────
   const isEvent = isEventTurn(nextTurn, game.totalTurns);
   let triggeredEvent = null;
   let updatedActiveEventIds = game.activeEventIds as number[];
 
   if (isEvent) {
     const alreadyActive = game.activeEventIds as number[];
-    // Pesca un evento non ancora attivo (o tutti se esauriti)
     let availableEvents = await db
       .select()
       .from(events)
       .then(all => all.filter(e => !alreadyActive.includes(e.id)));
 
     if (availableEvents.length === 0) {
-      // Tutti già usati: riprendi da capo escludendo solo quelli attivi permanenti
       availableEvents = await db.select().from(events);
     }
 
     if (availableEvents.length > 0) {
       triggeredEvent = availableEvents[Math.floor(Math.random() * availableEvents.length)];
-      const effect = triggeredEvent.effect as { type: string };
+      const effect = triggeredEvent.effect as EventEffect;
 
-      // Solo gli eventi permanenti rimangono in activeEventIds
       if (triggeredEvent.type === 'permanente') {
+        // Rimane attivo per tutto il resto della partita
         updatedActiveEventIds = [...alreadyActive, triggeredEvent.id];
         await db
           .update(games)
           .set({ activeEventIds: updatedActiveEventIds, currentTurn: nextTurn })
           .where(eq(games.id, game.id));
+      } else if (triggeredEvent.type === 'istantaneo') {
+        // Applica l'effetto subito nel DB
+        await db.update(games).set({ currentTurn: nextTurn }).where(eq(games.id, game.id));
+
+        if (effect.type === 'instant_credits') {
+          // Aggiunge/toglie crediti a tutti i giocatori
+          const delta = effect.delta;
+          await sql`
+            UPDATE players
+            SET credits = GREATEST(0, credits + ${delta})
+            WHERE game_id = ${game.id}
+          `;
+          await pusherServer.trigger(`game-${upperCode}`, 'credits-updated', {
+            delta,
+            reason: triggeredEvent.name,
+          });
+        }
       } else {
-        // Istantaneo o segreto: non resta attivo
-        await db
-          .update(games)
-          .set({ currentTurn: nextTurn })
-          .where(eq(games.id, game.id));
+        // segreto: trasmesso ma non persiste in activeEventIds
+        await db.update(games).set({ currentTurn: nextTurn }).where(eq(games.id, game.id));
       }
     } else {
       await db.update(games).set({ currentTurn: nextTurn }).where(eq(games.id, game.id));
@@ -148,7 +163,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     await db.update(games).set({ currentTurn: nextTurn }).where(eq(games.id, game.id));
   }
 
-  // Crea l'asta
+  // ── Crea l'asta ─────────────────────────────────────────────────────────────
   const [newAuction] = await db
     .insert(auctions)
     .values({

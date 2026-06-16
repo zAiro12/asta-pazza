@@ -1,7 +1,7 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
-import { games, players } from '@db/schema';
-import { eq } from 'drizzle-orm';
+import { games, players, categories } from '@db/schema';
+import { eq, inArray } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
 
@@ -21,6 +21,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 }
 
 // PUT /api/games/[code] — aggiorna stato partita (es. avvia)
+// Quando status diventa 'active', assegna una categoria base casuale a ogni giocatore
 export async function PUT(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const body = await request.json();
@@ -34,14 +35,39 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
 
   const [game] = await db
     .update(games)
-    .set({ status: body.status, ...( body.selectedCategoryIds ? { selectedCategoryIds: body.selectedCategoryIds } : {} ) })
+    .set({ status: body.status, ...(body.selectedCategoryIds ? { selectedCategoryIds: body.selectedCategoryIds } : {}) })
     .where(eq(games.code, code.toUpperCase()))
     .returning();
 
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
 
   if (body.status === 'active') {
-    await pusherServer.trigger(`game-${code.toUpperCase()}`, 'game-started', { gameId: game.id });
+    // Assegna categoria base casuale a ogni giocatore (solo se non già assegnata)
+    const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
+    const categoryIds = game.selectedCategoryIds as number[];
+
+    if (categoryIds.length > 0) {
+      const allCategories = await db
+        .select()
+        .from(categories)
+        .where(inArray(categories.id, categoryIds));
+
+      for (const player of allPlayers) {
+        if (player.baseCategoryId !== null) continue; // già assegnata
+        const randomCat = allCategories[Math.floor(Math.random() * allCategories.length)];
+        await db
+          .update(players)
+          .set({ baseCategoryId: randomCat.id })
+          .where(eq(players.id, player.id));
+      }
+    }
+
+    // Ricarica giocatori aggiornati per il broadcast
+    const updatedPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
+    await pusherServer.trigger(`game-${code.toUpperCase()}`, 'game-started', {
+      gameId: game.id,
+      players: updatedPlayers,
+    });
   }
 
   return NextResponse.json({ game });
