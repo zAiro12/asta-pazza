@@ -82,7 +82,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     const breakdown = calculateScore(player, playersWithGoods, activeEvents);
 
     const myObjectives = allPlayerObjectives.filter(r => r.po.playerId === player.id);
-    const objectivesScore = myObjectives.reduce((sum, { obj }) => sum + obj.rewardPoints, 0);
+    const objectivesScore = myObjectives.reduce((sum, { obj }) => sum + obj.points, 0);
 
     // Override obiettivi (scoring.ts ha TODO: 0 — usiamo quelli da DB)
     const total = breakdown.total + objectivesScore;
@@ -107,7 +107,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       objectives: myObjectives.map(({ obj }) => ({
         id: obj.id,
         name: obj.name,
-        points: obj.rewardPoints,
+        points: obj.points,
       })),
       score: {
         goods: breakdown.goodsValue,
