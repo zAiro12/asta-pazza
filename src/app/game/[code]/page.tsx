@@ -39,6 +39,12 @@ interface GameEvent {
   effect: Record<string, unknown>;
 }
 
+interface HistoryEntry {
+  goodName: string;
+  pricePaid: number;
+  turn: number;
+}
+
 function getSessionKey(code: string) {
   return `asta-player-${code}`;
 }
@@ -47,6 +53,20 @@ function loadSession(code: string): { id: number; name: string; isHost: boolean 
     const raw = localStorage.getItem(getSessionKey(code));
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
+}
+
+// Toast notification component
+function Toast({ message, color = 'yellow' }: { message: string; color?: 'yellow' | 'orange' | 'red' }) {
+  const colorMap = {
+    yellow: 'bg-yellow-500/90 text-gray-900',
+    orange: 'bg-orange-500/90 text-white',
+    red: 'bg-red-600/90 text-white',
+  };
+  return (
+    <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl font-semibold text-sm shadow-xl animate-bounce ${colorMap[color]}`}>
+      {message}
+    </div>
+  );
 }
 
 export default function GamePage() {
@@ -66,6 +86,10 @@ export default function GamePage() {
   const [bidError, setBidError] = useState('');
   const [bidLoading, setBidLoading] = useState(false);
 
+  // Conferme offerte (per host)
+  const [confirmedCount, setConfirmedCount] = useState(0);
+  const [totalPlayers, setTotalPlayers] = useState(0);
+
   // Revealing
   const [revealedBids, setRevealedBids] = useState<(Bid & { playerName: string })[]>([]);
   const [winnerId, setWinnerId] = useState<number | null>(null);
@@ -76,9 +100,25 @@ export default function GamePage() {
   const [scugnizzuLoading, setScugnizzuLoading] = useState(false);
   const [scugnizzuMessage, setScugnizzuMessage] = useState('');
 
-  // Evento
-  const [currentEvent, setCurrentEvent] = useState<GameEvent | null>(null);
-  const [showEventBanner, setShowEventBanner] = useState(false);
+  // Tutti gli eventi attivi accumulati
+  const [activeEvents, setActiveEvents] = useState<GameEvent[]>([]);
+  const [showEventsBanner, setShowEventsBanner] = useState(false);
+
+  // Storico beni per giocatore: playerId -> HistoryEntry[]
+  const [goodsHistory, setGoodsHistory] = useState<Record<number, HistoryEntry[]>>({});
+
+  // Storico aperto
+  const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
+
+  // Toast
+  const [toast, setToast] = useState<{ message: string; color: 'yellow' | 'orange' | 'red' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function showToast(message: string, color: 'yellow' | 'orange' | 'red' = 'yellow') {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, color });
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  }
 
   // Timer
   const [timeLeft, setTimeLeft] = useState(0);
@@ -99,7 +139,7 @@ export default function GamePage() {
     }, 1000);
   }, [stopTimer]);
 
-  // Init: carica sessione + stato attuale
+  // Init
   useEffect(() => {
     const session = loadSession(code);
     if (!session) { router.push(`/lobby/${code}`); return; }
@@ -116,6 +156,7 @@ export default function GamePage() {
       const me = gameData.players?.find((p: Player) => p.id === session!.id);
       if (me) setMyPlayer(me);
       setPlayers(gameData.players ?? []);
+      setTotalPlayers((gameData.players ?? []).length);
 
       if (auctionRes.ok) {
         const aData = await auctionRes.json();
@@ -153,13 +194,14 @@ export default function GamePage() {
       turn: number; totalTurns: number; isEventTurn: boolean; timerSeconds: number;
       event: GameEvent | null;
     }) => {
-      // Mostra evento se presente
+      // Accumula eventi: se arriva un nuovo evento, aggiungilo alla lista
       if (data.event) {
-        setCurrentEvent(data.event);
-        setShowEventBanner(true);
-      } else {
-        setCurrentEvent(null);
-        setShowEventBanner(false);
+        setActiveEvents(prev => {
+          const alreadyIn = prev.some(e => e.id === data.event!.id);
+          if (alreadyIn) return prev;
+          return [...prev, data.event!];
+        });
+        setShowEventsBanner(true);
       }
 
       setAuction({
@@ -181,13 +223,21 @@ export default function GamePage() {
       setWinningBid(0);
       setResultDetails('');
       setScugnizzuMessage('');
+      setConfirmedCount(0);
       startTimer(data.timerSeconds);
+    });
+
+    channel.bind('bid-confirmed', (data: { auctionId: number; confirmedCount: number; totalPlayers: number }) => {
+      setConfirmedCount(data.confirmedCount);
+      setTotalPlayers(data.totalPlayers);
     });
 
     channel.bind('bids-revealed', (data: {
       auctionId: number; bids: (Bid & { playerName: string })[];
       winnerId: number | null; winningBid: number; details: string;
       players: Player[];
+      goodId?: number;
+      turn?: number;
     }) => {
       stopTimer();
       setPhase('revealing');
@@ -197,13 +247,51 @@ export default function GamePage() {
       setResultDetails(data.details);
       setPlayers(data.players);
       setMyPlayer(prev => data.players.find(p => p.id === prev?.id) ?? prev);
+
+      // Aggiorna storico beni
+      if (data.winnerId && data.goodId) {
+        setGoodsHistory(prev => {
+          const existing = prev[data.winnerId!] ?? [];
+          // Trova il nome del bene dalle bids o dall'asta corrente
+          const goodName = data.bids[0] ? '' : '';
+          const entry: HistoryEntry = {
+            goodName: goodName,
+            pricePaid: data.winningBid,
+            turn: data.turn ?? 0,
+          };
+          return { ...prev, [data.winnerId!]: [...existing, entry] };
+        });
+      }
     });
 
-    channel.bind('auction-closed', () => {
+    channel.bind('auction-closed', (data?: { goodId?: number; goodName?: string; winnerId?: number; winningBid?: number; turn?: number }) => {
       setPhase('waiting');
       setAuction(null);
-      setCurrentEvent(null);
-      setShowEventBanner(false);
+      // Aggiorna storico con nome bene (arriva da close)
+      if (data?.winnerId && data?.goodName) {
+        setGoodsHistory(prev => {
+          const existing = prev[data.winnerId!] ?? [];
+          // Controlla se già aggiunto (evita duplicati)
+          const alreadyIn = existing.some(e => e.turn === data.turn);
+          if (alreadyIn) {
+            // Aggiorna il nome se mancante
+            return {
+              ...prev,
+              [data.winnerId!]: existing.map(e =>
+                e.turn === data.turn ? { ...e, goodName: data.goodName! } : e
+              ),
+            };
+          }
+          return {
+            ...prev,
+            [data.winnerId!]: [...existing, {
+              goodName: data.goodName!,
+              pricePaid: data.winningBid ?? 0,
+              turn: data.turn ?? 0,
+            }],
+          };
+        });
+      }
     });
 
     channel.bind('scugnizzu-used', (data: {
@@ -215,6 +303,11 @@ export default function GamePage() {
       setMyPlayer(prev =>
         prev?.id === data.playerId ? { ...prev, credits: data.newCredits, usedScugnizzu: true } : prev
       );
+      showToast(`🧑‍🔧 ${data.playerName} ha usato lo Scugnizzu! (+30 crediti)`, 'orange');
+    });
+
+    channel.bind('mercato-nero-declared', (data: { playerName: string }) => {
+      showToast(`🕵️ ${data.playerName} ha dichiarato Mercato Nero!`, 'red');
     });
 
     channel.bind('game-finished', () => {
@@ -227,8 +320,10 @@ export default function GamePage() {
 
   async function handleBid() {
     if (!myPlayer || !auction) return;
-    const amount = parseInt(bidAmount);
-    if (isNaN(amount) || amount < 0) { setBidError('Inserisci un importo valido'); return; }
+
+    // Se Mercato Nero: amount = 0 (irrilevante, calcolato al reveal)
+    const amount = useMercatoNero ? 0 : parseInt(bidAmount);
+    if (!useMercatoNero && (isNaN(amount) || amount < 0)) { setBidError('Inserisci un importo valido'); return; }
     if (!useMercatoNero && amount > myPlayer.credits) { setBidError('Crediti insufficienti'); return; }
 
     setBidLoading(true);
@@ -290,9 +385,15 @@ export default function GamePage() {
   }
 
   const timerColor = timeLeft > 15 ? 'text-green-400' : timeLeft > 5 ? 'text-yellow-400' : 'text-red-400';
+  const mercatoNeroWinner = winnerId
+    ? revealedBids.find(b => b.playerId === winnerId && b.isMercatoNero)
+    : null;
 
   return (
     <main className="min-h-screen bg-gray-950 text-white p-4 flex flex-col gap-4 max-w-lg mx-auto">
+
+      {/* Toast globale */}
+      {toast && <Toast message={toast.message} color={toast.color} />}
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -311,22 +412,43 @@ export default function GamePage() {
         </span>
       </div>
 
-      {/* Banner Evento */}
-      {showEventBanner && currentEvent && (
-        <div className="bg-purple-900/60 border border-purple-500 rounded-2xl px-4 py-4 space-y-2">
+      {/* Banner eventi attivi (tutti accumulati) */}
+      {activeEvents.length > 0 && (
+        <div className="bg-purple-900/60 border border-purple-500 rounded-2xl px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-purple-300 font-bold text-sm uppercase tracking-wide">⚡ Evento — {currentEvent.type}</p>
+            <p className="text-purple-300 font-bold text-sm uppercase tracking-wide">
+              ⚡ {activeEvents.length > 1 ? `${activeEvents.length} Eventi Attivi` : 'Evento Attivo'}
+            </p>
             <button
-              onClick={() => setShowEventBanner(false)}
+              onClick={() => setShowEventsBanner(v => !v)}
               className="text-purple-400 hover:text-white text-xs"
-            >✕ chiudi</button>
+            >
+              {showEventsBanner ? '▲ chiudi' : '▼ mostra'}
+            </button>
           </div>
-          <p className="text-white font-semibold">{currentEvent.name}</p>
-          <p className="text-gray-300 text-sm">{currentEvent.description}</p>
+          {showEventsBanner && (
+            <div className="space-y-3 pt-1">
+              {activeEvents.map((ev, i) => (
+                <div key={ev.id} className={`space-y-0.5 ${i > 0 ? 'border-t border-purple-700 pt-2' : ''}`}>
+                  <p className="text-xs text-purple-400 uppercase">{ev.type}</p>
+                  <p className="text-white font-semibold text-sm">{ev.name}</p>
+                  <p className="text-gray-300 text-xs">{ev.description}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Se banner chiuso, mostra i nomi in pillole */}
+          {!showEventsBanner && (
+            <div className="flex flex-wrap gap-1">
+              {activeEvents.map(ev => (
+                <span key={ev.id} className="bg-purple-700/50 text-purple-200 text-xs px-2 py-0.5 rounded-full">{ev.name}</span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Scugnizzu — disponibile sempre se non usato */}
+      {/* Scugnizzu */}
       {myPlayer && !myPlayer.usedScugnizzu && (
         <div className="bg-gray-900 rounded-2xl px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -366,20 +488,6 @@ export default function GamePage() {
       {/* Fase: bidding */}
       {phase === 'bidding' && auction && (
         <div className="bg-gray-900 rounded-2xl p-6 space-y-4">
-          {auction.isEventTurn && !showEventBanner && currentEvent && (
-            <button
-              onClick={() => setShowEventBanner(true)}
-              className="w-full bg-purple-500/20 border border-purple-500 rounded-xl px-4 py-2 text-purple-300 text-sm font-medium text-center hover:bg-purple-500/30 transition"
-            >
-              ⚡ {currentEvent.name} — tocca per rivedere
-            </button>
-          )}
-          {auction.isEventTurn && !currentEvent && (
-            <div className="bg-purple-500/20 border border-purple-500 rounded-xl px-4 py-2 text-purple-300 text-sm font-medium text-center">
-              ⚡ Turno Evento!
-            </div>
-          )}
-
           {/* Bene in vendita */}
           <div className="text-center space-y-1">
             <p className="text-gray-400 text-sm">In vendita</p>
@@ -395,18 +503,7 @@ export default function GamePage() {
           {/* Form offerta */}
           {!hasBid ? (
             <div className="space-y-3">
-              <input
-                type="number"
-                min={0}
-                max={myPlayer?.credits}
-                placeholder="La tua offerta"
-                value={bidAmount}
-                onChange={e => setBidAmount(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleBid()}
-                className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-              />
-
-              {/* Mercato Nero */}
+              {/* Bottone Mercato Nero — se attivo, nasconde il campo offerta */}
               {myPlayer && !myPlayer.usedMercatoNero && (
                 <button
                   onClick={() => setUseMercatoNero(v => !v)}
@@ -420,31 +517,62 @@ export default function GamePage() {
                 </button>
               )}
 
+              {/* Campo offerta — visibile solo se NON mercato nero */}
+              {!useMercatoNero && (
+                <input
+                  type="number"
+                  min={0}
+                  max={myPlayer?.credits}
+                  placeholder="La tua offerta"
+                  value={bidAmount}
+                  onChange={e => setBidAmount(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleBid()}
+                  className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                />
+              )}
+
+              {useMercatoNero && (
+                <p className="text-red-300 text-xs text-center">Con Mercato Nero non devi inserire un'offerta — vincerai pagando l'offerta più alta + 1.</p>
+              )}
+
               {bidError && <p className="text-red-400 text-sm">{bidError}</p>}
 
               <button
                 onClick={handleBid}
-                disabled={bidLoading || !bidAmount}
+                disabled={bidLoading || (!useMercatoNero && !bidAmount)}
                 className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 disabled:opacity-50 transition"
               >
-                {bidLoading ? 'Invio...' : useMercatoNero ? '🕵️ Conferma Mercato Nero' : '✅ Conferma Offerta'}
+                {bidLoading ? 'Invio...' : useMercatoNero ? '🕵️ Dichiara Mercato Nero' : '✅ Conferma Offerta'}
               </button>
             </div>
           ) : (
             <div className="text-center space-y-2">
-              <p className="text-green-400 font-semibold">✅ Offerta inviata!</p>
+              <p className="text-green-400 font-semibold">
+                {useMercatoNero ? '🕵️ Mercato Nero dichiarato!' : '✅ Offerta inviata!'}
+              </p>
               <p className="text-gray-400 text-sm">In attesa degli altri giocatori...</p>
             </div>
           )}
 
-          {/* Host: rivela offerte */}
+          {/* Host: counter conferme + rivela */}
           {myPlayer?.isHost && (
-            <button
-              onClick={handleReveal}
-              className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 transition mt-2"
-            >
-              👁 Rivela Offerte
-            </button>
+            <div className="space-y-2 mt-2">
+              <div className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2">
+                <span className="text-gray-400 text-sm">Offerte ricevute</span>
+                <span className="font-bold text-white">
+                  {confirmedCount} / {totalPlayers}
+                  {confirmedCount === totalPlayers && totalPlayers > 0 && (
+                    <span className="ml-2 text-green-400 text-xs">✓ tutti</span>
+                  )}
+                </span>
+              </div>
+              <button
+                onClick={handleReveal}
+                className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 transition"
+              >
+                👁 Rivela Offerte
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -457,13 +585,24 @@ export default function GamePage() {
             <p className="text-gray-400 text-sm">Risultato asta</p>
           </div>
 
-          {/* Vincitore */}
+          {/* Vincitore — con badge MN prominente se ha usato Mercato Nero */}
           {winnerId ? (
-            <div className="bg-yellow-400/10 border border-yellow-400 rounded-xl px-4 py-3 text-center">
-              <p className="text-yellow-400 font-bold text-lg">
+            <div className={`border rounded-xl px-4 py-3 text-center ${
+              mercatoNeroWinner
+                ? 'bg-red-900/40 border-red-500'
+                : 'bg-yellow-400/10 border-yellow-400'
+            }`}>
+              {mercatoNeroWinner && (
+                <p className="text-red-400 text-xs font-bold uppercase tracking-widest mb-1">🕵️ Vinto con Mercato Nero</p>
+              )}
+              <p className={`font-bold text-lg ${
+                mercatoNeroWinner ? 'text-red-300' : 'text-yellow-400'
+              }`}>
                 🏆 {players.find(p => p.id === winnerId)?.name ?? 'Vincitore'}
               </p>
-              <p className="text-gray-300 text-sm">ha vinto pagando <span className="font-bold text-white">{winningBid} crediti</span></p>
+              <p className="text-gray-300 text-sm">
+                ha vinto pagando <span className="font-bold text-white">{winningBid} crediti</span>
+              </p>
             </div>
           ) : (
             <div className="bg-gray-800 rounded-xl px-4 py-3 text-center">
@@ -475,13 +614,14 @@ export default function GamePage() {
           <ul className="space-y-2">
             {revealedBids.map(bid => (
               <li key={bid.playerId} className={`flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2 ${
-                bid.playerId === winnerId ? 'border border-yellow-400' : ''
+                bid.playerId === winnerId ? (mercatoNeroWinner && bid.isMercatoNero ? 'border border-red-500' : 'border border-yellow-400') : ''
               }`}>
                 <span className="font-medium">
                   {bid.isMercatoNero && <span className="text-red-400 mr-1">🕵️</span>}
                   {bid.playerName}
+                  {bid.isMercatoNero && <span className="text-red-400 text-xs ml-1">(MN)</span>}
                 </span>
-                <span className="font-bold">{bid.amount} cr</span>
+                <span className="font-bold">{bid.isMercatoNero ? '—' : `${bid.amount} cr`}</span>
               </li>
             ))}
           </ul>
@@ -500,17 +640,40 @@ export default function GamePage() {
         </div>
       )}
 
-      {/* Giocatori e crediti */}
+      {/* Giocatori, crediti e storico */}
       <div className="bg-gray-900 rounded-2xl p-4 space-y-2">
         <p className="text-gray-400 text-sm font-medium">Giocatori</p>
         <ul className="space-y-1">
           {players.map(p => (
-            <li key={p.id} className="flex items-center justify-between text-sm">
-              <span className={p.id === myPlayer?.id ? 'font-bold text-yellow-400' : 'text-gray-300'}>
-                {p.name}{p.isHost ? ' 👑' : ''}
-                {p.usedScugnizzu && <span className="text-orange-400 ml-1 text-xs">(Scugnizzu)</span>}
-              </span>
-              <span className="text-gray-400">💰 {p.credits}</span>
+            <li key={p.id}>
+              <button
+                className="w-full flex items-center justify-between text-sm py-1 hover:opacity-80 transition text-left"
+                onClick={() => setOpenHistoryPlayerId(prev => prev === p.id ? null : p.id)}
+              >
+                <span className={p.id === myPlayer?.id ? 'font-bold text-yellow-400' : 'text-gray-300'}>
+                  {p.name}{p.isHost ? ' 👑' : ''}
+                  {p.usedScugnizzu && <span className="text-orange-400 ml-1 text-xs">(Scugnizzu)</span>}
+                  {p.usedMercatoNero && <span className="text-red-400 ml-1 text-xs">(MN usato)</span>}
+                </span>
+                <span className="text-gray-400">💰 {p.credits}</span>
+              </button>
+
+              {/* Storico beni del giocatore */}
+              {openHistoryPlayerId === p.id && (
+                <div className="mt-1 ml-2 mb-2 space-y-1">
+                  {(goodsHistory[p.id] ?? []).length === 0 ? (
+                    <p className="text-gray-600 text-xs italic">Nessun bene acquistato ancora.</p>
+                  ) : (
+                    (goodsHistory[p.id] ?? []).map((entry, i) => (
+                      <div key={i} className="flex justify-between text-xs bg-gray-800 rounded-lg px-3 py-1">
+                        <span className="text-gray-300">{entry.goodName || '(bene)'}</span>
+                        <span className="text-yellow-400 font-bold">{entry.pricePaid} cr</span>
+                        <span className="text-gray-600">T{entry.turn}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </li>
           ))}
         </ul>

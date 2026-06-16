@@ -1,8 +1,9 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import { games, players, auctions, bids } from '@db/schema';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
+import { pusherServer } from '@/lib/pusher-server';
 
 type Ctx = { params: Promise<{ code: string }> };
 
@@ -21,6 +22,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
 
   const { playerId, amount, isMercatoNero = false } = body;
 
+  // Per Mercato Nero l'amount è irrilevante, ma deve essere >= 0
   if (!playerId || amount === undefined || amount < 0)
     return NextResponse.json({ error: 'playerId e amount obbligatori (amount >= 0)' }, { status: 400 });
 
@@ -51,7 +53,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   if (!isMercatoNero && amount > player.credits)
     return NextResponse.json({ error: 'Crediti insufficienti' }, { status: 409 });
 
-  // Upsert offerta: se il giocatore ha già offerto, aggiorna
+  // Upsert offerta
   const [existing] = await db
     .select()
     .from(bids)
@@ -62,6 +64,26 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     await db.update(bids).set({ amount, isMercatoNero }).where(eq(bids.id, existing.id));
   } else {
     await db.insert(bids).values({ auctionId: auction.id, playerId, amount, isMercatoNero });
+  }
+
+  // Conta quante offerte ci sono ora per questo turno (per il counter dell'host)
+  const allBids = await db.select().from(bids).where(eq(bids.auctionId, auction.id));
+  const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
+  const totalPlayers = allPlayers.length;
+  const confirmedCount = allBids.length;
+
+  // Broadcast bid-confirmed a tutti (solo contatore, nessun dato riservato)
+  await pusherServer.trigger(`game-${upperCode}`, 'bid-confirmed', {
+    auctionId: auction.id,
+    confirmedCount,
+    totalPlayers,
+  });
+
+  // Notifica globale se è Mercato Nero
+  if (isMercatoNero) {
+    await pusherServer.trigger(`game-${upperCode}`, 'mercato-nero-declared', {
+      playerName: player.name,
+    });
   }
 
   return NextResponse.json({ ok: true, auctionId: auction.id });
