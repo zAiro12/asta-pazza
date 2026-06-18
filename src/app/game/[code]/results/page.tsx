@@ -39,6 +39,34 @@ interface PlayerResult {
   score: Score;
 }
 
+// Mappa categoria → colori Tailwind (bg + testo)
+const CATEGORY_COLORS: Record<string, string> = {
+  'Auto':             'bg-red-500/20 text-red-300',
+  'Immobili':         'bg-orange-500/20 text-orange-300',
+  'Tecnologia':       'bg-cyan-500/20 text-cyan-300',
+  'Trasporti':        'bg-sky-500/20 text-sky-300',
+  'Lusso':            'bg-yellow-500/20 text-yellow-300',
+  'Imprese':          'bg-amber-500/20 text-amber-300',
+  'Sport':            'bg-green-500/20 text-green-300',
+  'Intrattenimento':  'bg-pink-500/20 text-pink-300',
+  'Energia':          'bg-lime-500/20 text-lime-300',
+  'Potere':           'bg-purple-500/20 text-purple-300',
+  'Scienza':          'bg-indigo-500/20 text-indigo-300',
+  'Turismo':          'bg-teal-500/20 text-teal-300',
+  'Animali':          'bg-emerald-500/20 text-emerald-300',
+  'Università':       'bg-blue-500/20 text-blue-300',
+  'Quadri':           'bg-rose-500/20 text-rose-300',
+};
+
+function CategoryBadge({ name }: { name: string }) {
+  const colorClass = CATEGORY_COLORS[name] ?? 'bg-gray-500/20 text-gray-300';
+  return (
+    <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full mt-0.5 ${colorClass}`}>
+      {name}
+    </span>
+  );
+}
+
 export default function ResultsPage() {
   const params = useParams();
   const router = useRouter();
@@ -202,9 +230,7 @@ export default function ResultsPage() {
                               {g.hasBaseBonus && <span className="text-yellow-400 mr-1">★</span>}
                               {g.name}
                             </span>
-                            {g.categoryName && (
-                              <span className="text-xs text-gray-500 mt-0.5">{g.categoryName}</span>
-                            )}
+                            {g.categoryName && <CategoryBadge name={g.categoryName} />}
                           </div>
                           <span className="text-gray-500 ml-2 shrink-0">{g.baseValue}{g.hasBaseBonus ? '+10' : ''} pt</span>
                         </li>
