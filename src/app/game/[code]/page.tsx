@@ -162,6 +162,12 @@ export default function GamePage() {
   const [tiebreakRound, setTiebreakRound] = useState(1);
   const [tiebreakHistory, setTiebreakHistory] = useState<TiebreakRoundEntry[]>([]);
 
+  // Guard ref: viene incrementata ogni volta che Pusher apre un nuovo round di spareggio.
+  // handleSubmitTiebreak cattura il valore corrente prima della fetch e,
+  // al ritorno della risposta HTTP, lo confronta con quello attuale:
+  // se sono diversi, Pusher ha già gestito il nuovo round e non sovrascriviamo lo stato.
+  const tiebreakEpochRef = useRef(0);
+
   const [goodsHistory, setGoodsHistory] = useState<Record<number, HistoryEntry[]>>({});
   const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
 
@@ -307,6 +313,7 @@ export default function GamePage() {
       setResultDetails(''); setScugnizzuMessage(''); setConfirmedCount(0);
       setTiedPlayerIds([]); setShowTiebreakModal(false); setTiebreakSubmitted(false);
       setTiebreakAmount(''); setTiebreakError(''); setTiebreakRound(1); setTiebreakHistory([]);
+      tiebreakEpochRef.current += 1;
       startTimer(data.timerSeconds);
     });
 
@@ -359,6 +366,8 @@ export default function GamePage() {
         setTiebreakSubmitted(false);
         setTiebreakError('');
         setTiebreakSubmitting(false);
+        // Incrementa l'epoch così l'eventuale risposta HTTP in volo viene ignorata
+        tiebreakEpochRef.current += 1;
         setShowTiebreakModal(true);
         showToast('⚠️ Ancora pareggio! Nuovo spareggio...', 'orange');
       } else {
@@ -485,7 +494,6 @@ export default function GamePage() {
 
   async function handleSubmitTiebreak() {
     // FIX: usa loadSession come fallback per evitare race condition su mount
-    // (session state potrebbe essere ancora null se il modale si apre prima che setSession() venga processato)
     const resolvedSession = session ?? loadSession(code);
     const resolvedPlayer = myPlayer;
     if (!resolvedPlayer || !resolvedSession?.sessionToken) return;
@@ -493,6 +501,10 @@ export default function GamePage() {
     const amount = parseInt(tiebreakAmount);
     if (isNaN(amount) || amount < 0) { setTiebreakError('Inserisci un importo valido'); return; }
     if (amount > resolvedPlayer.credits) { setTiebreakError('Crediti insufficienti'); return; }
+
+    // Cattura l'epoch corrente: se Pusher arriva prima della risposta HTTP,
+    // tiebreakEpochRef.current sarà già incrementato e non sovrascriveremo lo stato.
+    const epochAtSubmit = tiebreakEpochRef.current;
 
     setTiebreakSubmitting(true);
     setTiebreakError('');
@@ -503,10 +515,15 @@ export default function GamePage() {
     });
     const data = await res.json();
     if (!res.ok) {
-      setTiebreakError(data.error ?? 'Errore nello spareggio');
-      setTiebreakSubmitting(false);
+      // Solo se siamo ancora nello stesso round (Pusher non ha già aperto il prossimo)
+      if (tiebreakEpochRef.current === epochAtSubmit) {
+        setTiebreakError(data.error ?? 'Errore nello spareggio');
+        setTiebreakSubmitting(false);
+      }
       return;
     }
+    // Se l'epoch è cambiata, Pusher ha già gestito il nuovo round: non fare nulla.
+    if (tiebreakEpochRef.current !== epochAtSubmit) return;
     setTiebreakSubmitted(true);
     setTiebreakSubmitting(false);
   }
