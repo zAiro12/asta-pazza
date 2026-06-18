@@ -39,29 +39,38 @@ interface PlayerResult {
   score: Score;
 }
 
-// Mappa categoria → colori Tailwind (bg + testo)
-const CATEGORY_COLORS: Record<string, string> = {
-  'Auto':             'bg-red-500/20 text-red-300',
-  'Immobili':         'bg-orange-500/20 text-orange-300',
-  'Tecnologia':       'bg-cyan-500/20 text-cyan-300',
-  'Trasporti':        'bg-sky-500/20 text-sky-300',
-  'Lusso':            'bg-yellow-500/20 text-yellow-300',
-  'Imprese':          'bg-amber-500/20 text-amber-300',
-  'Sport':            'bg-green-500/20 text-green-300',
-  'Intrattenimento':  'bg-pink-500/20 text-pink-300',
-  'Energia':          'bg-lime-500/20 text-lime-300',
-  'Potere':           'bg-purple-500/20 text-purple-300',
-  'Scienza':          'bg-indigo-500/20 text-indigo-300',
-  'Turismo':          'bg-teal-500/20 text-teal-300',
-  'Animali':          'bg-emerald-500/20 text-emerald-300',
-  'Università':       'bg-blue-500/20 text-blue-300',
-  'Quadri':           'bg-rose-500/20 text-rose-300',
-};
+// Palette di 12 coppie bg/testo vivaci — funziona per qualsiasi categoria
+const PALETTE: { bg: string; text: string; border: string }[] = [
+  { bg: 'bg-red-500/20',     text: 'text-red-300',     border: 'border-red-500/40'     },
+  { bg: 'bg-orange-500/20',  text: 'text-orange-300',  border: 'border-orange-500/40'  },
+  { bg: 'bg-amber-500/20',   text: 'text-amber-300',   border: 'border-amber-500/40'   },
+  { bg: 'bg-yellow-500/20',  text: 'text-yellow-300',  border: 'border-yellow-500/40'  },
+  { bg: 'bg-lime-500/20',    text: 'text-lime-300',    border: 'border-lime-500/40'    },
+  { bg: 'bg-green-500/20',   text: 'text-green-300',   border: 'border-green-500/40'   },
+  { bg: 'bg-teal-500/20',    text: 'text-teal-300',    border: 'border-teal-500/40'    },
+  { bg: 'bg-cyan-500/20',    text: 'text-cyan-300',    border: 'border-cyan-500/40'    },
+  { bg: 'bg-sky-500/20',     text: 'text-sky-300',     border: 'border-sky-500/40'     },
+  { bg: 'bg-indigo-500/20',  text: 'text-indigo-300',  border: 'border-indigo-500/40'  },
+  { bg: 'bg-purple-500/20',  text: 'text-purple-300',  border: 'border-purple-500/40'  },
+  { bg: 'bg-pink-500/20',    text: 'text-pink-300',    border: 'border-pink-500/40'    },
+];
+
+// Hash deterministico del nome → indice palette (stessa categoria = stesso colore sempre)
+function hashName(name: string): number {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) {
+    h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  }
+  return h % PALETTE.length;
+}
 
 function CategoryBadge({ name }: { name: string }) {
-  const colorClass = CATEGORY_COLORS[name] ?? 'bg-gray-500/20 text-gray-300';
+  const { bg, text, border } = PALETTE[hashName(name)];
   return (
-    <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full mt-0.5 ${colorClass}`}>
+    <span
+      className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full border mt-1 ${bg} ${text} ${border}`}
+    >
+      <span className="w-1.5 h-1.5 rounded-full opacity-80 bg-current" />
       {name}
     </span>
   );
@@ -224,15 +233,15 @@ export default function ResultsPage() {
                     <p className="text-gray-400 text-xs font-medium mb-1">Beni acquistati</p>
                     <ul className="space-y-1">
                       {r.goods.map(g => (
-                        <li key={g.id} className="flex items-center justify-between text-sm bg-gray-800 rounded-lg px-3 py-2">
+                        <li key={g.id} className="flex items-start justify-between text-sm bg-gray-800 rounded-lg px-3 py-2">
                           <div className="flex flex-col">
-                            <span className="text-gray-300">
+                            <span className="text-gray-200 font-medium">
                               {g.hasBaseBonus && <span className="text-yellow-400 mr-1">★</span>}
                               {g.name}
                             </span>
                             {g.categoryName && <CategoryBadge name={g.categoryName} />}
                           </div>
-                          <span className="text-gray-500 ml-2 shrink-0">{g.baseValue}{g.hasBaseBonus ? '+10' : ''} pt</span>
+                          <span className="text-gray-500 ml-2 shrink-0 pt-0.5">{g.baseValue}{g.hasBaseBonus ? '+10' : ''} pt</span>
                         </li>
                       ))}
                     </ul>
