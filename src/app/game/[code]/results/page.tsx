@@ -8,6 +8,7 @@ interface Good {
   name: string;
   baseValue: number;
   categoryId: number;
+  categoryName: string;
   pricePaid: number;
   hasBaseBonus: boolean;
 }
@@ -195,12 +196,17 @@ export default function ResultsPage() {
                     <p className="text-gray-400 text-xs font-medium mb-1">Beni acquistati</p>
                     <ul className="space-y-1">
                       {r.goods.map(g => (
-                        <li key={g.id} className="flex items-center justify-between text-sm bg-gray-800 rounded-lg px-3 py-1">
-                          <span className="text-gray-300">
-                            {g.hasBaseBonus && <span className="text-yellow-400 mr-1">★</span>}
-                            {g.name}
-                          </span>
-                          <span className="text-gray-500">{g.baseValue}{g.hasBaseBonus ? '+10' : ''} pt</span>
+                        <li key={g.id} className="flex items-center justify-between text-sm bg-gray-800 rounded-lg px-3 py-2">
+                          <div className="flex flex-col">
+                            <span className="text-gray-300">
+                              {g.hasBaseBonus && <span className="text-yellow-400 mr-1">★</span>}
+                              {g.name}
+                            </span>
+                            {g.categoryName && (
+                              <span className="text-xs text-gray-500 mt-0.5">{g.categoryName}</span>
+                            )}
+                          </div>
+                          <span className="text-gray-500 ml-2 shrink-0">{g.baseValue}{g.hasBaseBonus ? '+10' : ''} pt</span>
                         </li>
                       ))}
                     </ul>

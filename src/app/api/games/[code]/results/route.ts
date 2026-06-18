@@ -1,6 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
-import { games, players, playerGoods, goods, objectives, playerObjectives, events as eventsTable, playerObjectiveAssignments } from '@db/schema';
+import { games, players, playerGoods, goods, categories, objectives, playerObjectives, events as eventsTable, playerObjectiveAssignments } from '@db/schema';
 import { eq, inArray } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { calculateScore } from '@/lib/scoring';
@@ -32,6 +32,16 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     .innerJoin(goods, eq(playerGoods.goodId, goods.id))
     .where(eq(playerGoods.gameId, game.id));
 
+  // Carica mappa categoryId -> categoryName
+  const selectedCategoryIds = (game.selectedCategoryIds ?? []) as number[];
+  let categoriesMap: Record<number, string> = {};
+  if (selectedCategoryIds.length > 0) {
+    const cats = await db.select().from(categories).where(inArray(categories.id, selectedCategoryIds));
+    for (const c of cats) {
+      categoriesMap[c.id] = c.name;
+    }
+  }
+
   // Costruisce PlayerWithGoods per ogni giocatore
   const playersWithGoods: PlayerWithGoods[] = allPlayers.map(player => {
     const myGoods: Good[] = allPlayerGoods
@@ -57,7 +67,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   });
 
   // ── Valuta e salva gli obiettivi END-OF-GAME ────────────────────────────────
-  await evaluateEndOfGameObjectives(db, game.id, game.selectedCategoryIds as number[], playersWithGoods);
+  await evaluateEndOfGameObjectives(db, game.id, selectedCategoryIds, playersWithGoods);
 
   // ── Legge tutti gli obiettivi completati (immediati + end-of-game) ──────────
   const allPlayerObjectives = await db
@@ -110,6 +120,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
           name: good.name,
           baseValue: good.baseValue,
           categoryId: good.categoryId,
+          categoryName: categoriesMap[good.categoryId] ?? '',
           pricePaid: pg.pricePaid,
           hasBaseBonus: player.baseCategoryId === good.categoryId,
         })),
