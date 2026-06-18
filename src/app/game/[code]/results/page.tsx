@@ -39,7 +39,6 @@ interface PlayerResult {
   score: Score;
 }
 
-// Palette di 12 coppie bg/testo vivaci — funziona per qualsiasi categoria
 const PALETTE: { bg: string; text: string; border: string }[] = [
   { bg: 'bg-red-500/20',     text: 'text-red-300',     border: 'border-red-500/40'     },
   { bg: 'bg-orange-500/20',  text: 'text-orange-300',  border: 'border-orange-500/40'  },
@@ -55,7 +54,6 @@ const PALETTE: { bg: string; text: string; border: string }[] = [
   { bg: 'bg-pink-500/20',    text: 'text-pink-300',    border: 'border-pink-500/40'    },
 ];
 
-// Hash deterministico del nome → indice palette (stessa categoria = stesso colore sempre)
 function hashName(name: string): number {
   let h = 0;
   for (let i = 0; i < name.length; i++) {
@@ -68,10 +66,9 @@ function CategoryBadge({ name }: { name: string }) {
   const { bg, text, border } = PALETTE[hashName(name)];
   return (
     <span
-      className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full border mt-1 ${bg} ${text} ${border}`}
+      className={`inline-block whitespace-nowrap text-xs font-semibold px-2 py-0.5 rounded-full border mt-1 ${bg} ${text} ${border}`}
     >
-      <span className="w-1.5 h-1.5 rounded-full opacity-80 bg-current" />
-      {name}
+      &#x25CF; {name}
     </span>
   );
 }
@@ -234,7 +231,7 @@ export default function ResultsPage() {
                     <ul className="space-y-1">
                       {r.goods.map(g => (
                         <li key={g.id} className="flex items-start justify-between text-sm bg-gray-800 rounded-lg px-3 py-2">
-                          <div className="flex flex-col">
+                          <div className="flex flex-col items-start">
                             <span className="text-gray-200 font-medium">
                               {g.hasBaseBonus && <span className="text-yellow-400 mr-1">★</span>}
                               {g.name}
