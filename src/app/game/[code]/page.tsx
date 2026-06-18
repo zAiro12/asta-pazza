@@ -314,6 +314,8 @@ export default function GamePage() {
     const handleRevealLikeEvent = (data: {
       auctionId: number;
       bids: (Bid & { playerName: string })[];
+      roundBids?: { playerId: number; playerName: string; amount: number; round: number }[];
+      tiebreakRound?: number;
       winnerId: number | null;
       winningBid: number;
       details: string;
@@ -332,25 +334,25 @@ export default function GamePage() {
       const myId = session?.id;
 
       if (tiedIds.length > 0 && myId && tiedIds.includes(myId)) {
-        // Nuovo round di spareggio: salva history del round appena concluso
-        setTiebreakHistory(prev => {
-          const roundNum = prev.length + 1;
-          const roundBids = tiedIds.map(pid => {
-            const found = data.players.find(p => p.id === pid);
-            return { playerName: found?.name ?? `#${pid}`, amount: data.winningBid };
+        // Nuovo round di spareggio: salva la history usando le roundBids del round appena concluso
+        if (data.roundBids && data.roundBids.length > 0) {
+          const completedRound = data.tiebreakRound ?? 1;
+          setTiebreakHistory(prev => {
+            // evita duplicati per lo stesso round
+            if (prev.some(e => e.round === completedRound)) return prev;
+            return [...prev, {
+              round: completedRound,
+              bids: data.roundBids!.map(b => ({ playerName: b.playerName, amount: b.amount })),
+            }];
           });
-          // usiamo le offerte originali dai bids se disponibili
-          const betterBids = tiedIds.map(pid => {
-            const b = data.bids.find(b => b.playerId === pid);
-            return { playerName: b?.playerName ?? `#${pid}`, amount: b?.amount ?? data.winningBid };
-          });
-          return [...prev, { round: roundNum, bids: betterBids }];
-        });
+        }
         setTiebreakRound(prev => prev + 1);
-        setShowTiebreakModal(true);
-        setTiebreakSubmitted(false);
+        // Riapri il wizard con input e stato puliti
         setTiebreakAmount('');
+        setTiebreakSubmitted(false);
         setTiebreakError('');
+        setTiebreakSubmitting(false);
+        setShowTiebreakModal(true);
         showToast('⚠️ Ancora pareggio! Nuovo spareggio...', 'orange');
       } else {
         setShowTiebreakModal(false);
