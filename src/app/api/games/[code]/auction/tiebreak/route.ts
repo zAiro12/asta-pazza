@@ -44,7 +44,8 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   if (!auction) return NextResponse.json({ error: 'Nessuna asta in fase revealing' }, { status: 409 });
   if (auction.winnerId) return NextResponse.json({ error: 'Asta già risolta' }, { status: 409 });
 
-  const tiedPlayerIds = ((auction.tiedPlayerIds as number[]) ?? []);
+  // Coerce to number[] to prevent string/number type mismatch from Neon/Drizzle
+  const tiedPlayerIds = ((auction.tiedPlayerIds as unknown[]) ?? []).map(Number);
   if (tiedPlayerIds.length < 2) return NextResponse.json({ error: 'Nessuno spareggio in corso' }, { status: 409 });
   if (!tiedPlayerIds.includes(playerId)) return NextResponse.json({ error: 'Giocatore non coinvolto nello spareggio' }, { status: 403 });
   if (amount > player.credits) return NextResponse.json({ error: 'Crediti insufficienti' }, { status: 409 });
