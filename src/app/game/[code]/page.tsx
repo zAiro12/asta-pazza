@@ -265,10 +265,11 @@ export default function GamePage() {
           setPhase(aData.auction.status === 'revealing' ? 'revealing' : 'bidding');
           if (aData.auction.status === 'bidding') startTimer(45);
           if (aData.auction.status === 'revealing' && aData.bids) setRevealedBids(aData.bids);
-          const tiedIds: number[] = aData.auction.tiedPlayerIds ?? [];
+          // Coerce to number[] to prevent string/number type mismatch from DB
+          const tiedIds: number[] = (aData.auction.tiedPlayerIds ?? []).map(Number);
           setTiedPlayerIds(tiedIds);
           if (aData.auction.status === 'revealing' && tiedIds.length > 0) {
-            if (session?.id && tiedIds.includes(session.id)) {
+            if (session?.id && tiedIds.includes(Number(session.id))) {
               setShowTiebreakModal(true);
             }
             setResultDetails('Pareggio: spareggio in corso');
@@ -331,11 +332,12 @@ export default function GamePage() {
       setRevealedBids(data.bids); setWinnerId(data.winnerId); setWinningBid(data.winningBid);
       setResultDetails(data.details); setPlayers(data.players);
       setMyPlayer(prev => data.players.find(p => p.id === prev?.id) ?? prev);
-      const tiedIds = data.tiedPlayerIds ?? [];
+      // Coerce to number[] to prevent string/number type mismatch from DB/Pusher payload
+      const tiedIds = (data.tiedPlayerIds ?? []).map(Number);
       setTiedPlayerIds(tiedIds);
       const myId = sessionIdRef.current;
 
-      if (tiedIds.length > 0 && myId && tiedIds.includes(myId)) {
+      if (tiedIds.length > 0 && myId !== null && tiedIds.includes(Number(myId))) {
         // Nuovo round di spareggio: salva la history usando le roundBids del round appena concluso
         if (data.roundBids && data.roundBids.length > 0) {
           const completedRound = data.tiebreakRound ?? 1;
