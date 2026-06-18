@@ -499,6 +499,8 @@ export default function GamePage() {
                 </p>
                 <input
                   type="number"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   min={0}
                   max={myPlayer.credits}
                   value={tiebreakAmount}
