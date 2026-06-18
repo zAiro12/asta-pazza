@@ -67,7 +67,11 @@ interface GeneralBonus {
   points: number | null;
 }
 
-// Punti fissi per i bonus generali (specchiati da scoring.ts)
+interface TiebreakRoundEntry {
+  round: number;
+  bids: { playerName: string; amount: number }[];
+}
+
 const GENERAL_BONUS_POINTS: Record<string, string> = {
   mini_collection: '10',
   full_collection: '20',
@@ -154,6 +158,8 @@ export default function GamePage() {
   const [tiebreakSubmitting, setTiebreakSubmitting] = useState(false);
   const [tiebreakSubmitted, setTiebreakSubmitted] = useState(false);
   const [tiebreakError, setTiebreakError] = useState('');
+  const [tiebreakRound, setTiebreakRound] = useState(1);
+  const [tiebreakHistory, setTiebreakHistory] = useState<TiebreakRoundEntry[]>([]);
 
   const [goodsHistory, setGoodsHistory] = useState<Record<number, HistoryEntry[]>>({});
   const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
@@ -161,7 +167,6 @@ export default function GamePage() {
   const [toast, setToast] = useState<{ message: string; color: 'yellow' | 'orange' | 'red' | 'green' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Obiettivi
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [generalBonuses, setGeneralBonuses] = useState<GeneralBonus[]>([]);
   const [completedObjectiveIds, setCompletedObjectiveIds] = useState<number[]>([]);
@@ -214,7 +219,6 @@ export default function GamePage() {
     }
   }
 
-  // Init
   useEffect(() => {
     const session = loadSession(code);
     if (!session?.sessionToken) { router.push(`/lobby/${code}`); return; }
@@ -238,9 +242,7 @@ export default function GamePage() {
       if (gameData.categories) setCategoriesMap(gameData.categories);
       if (eventsRes.ok) {
         const evData = await eventsRes.json();
-        if (evData.events?.length) {
-          setActiveEvents(evData.events);
-        }
+        if (evData.events?.length) setActiveEvents(evData.events);
       }
 
       if (auctionRes.ok) {
@@ -276,7 +278,6 @@ export default function GamePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Pusher
   useEffect(() => {
     const session = loadSession(code);
     if (!session) return;
@@ -302,7 +303,7 @@ export default function GamePage() {
       setBidError(''); setRevealedBids([]); setWinnerId(null); setWinningBid(0);
       setResultDetails(''); setScugnizzuMessage(''); setConfirmedCount(0);
       setTiedPlayerIds([]); setShowTiebreakModal(false); setTiebreakSubmitted(false);
-      setTiebreakAmount(''); setTiebreakError('');
+      setTiebreakAmount(''); setTiebreakError(''); setTiebreakRound(1); setTiebreakHistory([]);
       startTimer(data.timerSeconds);
     });
 
@@ -329,14 +330,32 @@ export default function GamePage() {
       const tiedIds = data.tiedPlayerIds ?? [];
       setTiedPlayerIds(tiedIds);
       const myId = session?.id;
+
       if (tiedIds.length > 0 && myId && tiedIds.includes(myId)) {
+        // Nuovo round di spareggio: salva history del round appena concluso
+        setTiebreakHistory(prev => {
+          const roundNum = prev.length + 1;
+          const roundBids = tiedIds.map(pid => {
+            const found = data.players.find(p => p.id === pid);
+            return { playerName: found?.name ?? `#${pid}`, amount: data.winningBid };
+          });
+          // usiamo le offerte originali dai bids se disponibili
+          const betterBids = tiedIds.map(pid => {
+            const b = data.bids.find(b => b.playerId === pid);
+            return { playerName: b?.playerName ?? `#${pid}`, amount: b?.amount ?? data.winningBid };
+          });
+          return [...prev, { round: roundNum, bids: betterBids }];
+        });
+        setTiebreakRound(prev => prev + 1);
         setShowTiebreakModal(true);
         setTiebreakSubmitted(false);
         setTiebreakAmount('');
         setTiebreakError('');
+        showToast('⚠️ Ancora pareggio! Nuovo spareggio...', 'orange');
       } else {
         setShowTiebreakModal(false);
       }
+
       if (data.winnerId && data.goodName) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
@@ -473,7 +492,6 @@ export default function GamePage() {
       setTiebreakSubmitting(false);
       return;
     }
-
     setTiebreakSubmitted(true);
     setTiebreakSubmitting(false);
   }
@@ -488,14 +506,38 @@ export default function GamePage() {
     <main className="min-h-screen bg-gray-950 text-white p-4 flex flex-col gap-4 max-w-lg mx-auto">
 
       {toast && <Toast message={toast.message} color={toast.color} />}
+
+      {/* Modal Spareggio */}
       {showTiebreakModal && myPlayer && (
         <div className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-gray-900 border border-yellow-500 rounded-2xl p-5 space-y-4">
-            <h3 className="text-lg font-bold text-yellow-400">⚖️ Spareggio</h3>
+          <div className="w-full max-w-sm bg-gray-900 border border-yellow-500 rounded-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-bold text-yellow-400">⚖️ Spareggio{tiebreakRound > 1 ? ` — Round ${tiebreakRound}` : ''}</h3>
+
+            {/* Storico round precedenti */}
+            {tiebreakHistory.length > 0 && (
+              <div className="space-y-2">
+                {tiebreakHistory.map(entry => (
+                  <div key={entry.round} className="bg-gray-800 rounded-xl px-3 py-2">
+                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Round {entry.round} — Pareggio a {entry.bids[0]?.amount ?? '?'} cr</p>
+                    <ul className="space-y-0.5">
+                      {entry.bids.map((b, i) => (
+                        <li key={i} className="flex justify-between text-xs">
+                          <span className="text-gray-300">{b.playerName}</span>
+                          <span className="text-yellow-400 font-bold">{b.amount} cr</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {!tiebreakSubmitted ? (
               <>
                 <p className="text-sm text-gray-300">
-                  Sei in pareggio. Inserisci la tua offerta di spareggio (max {myPlayer.credits} crediti).
+                  {tiebreakRound > 1
+                    ? `Pareggio anche al round ${tiebreakRound - 1}! Inserisci una nuova offerta (max ${myPlayer.credits} crediti).`
+                    : `Sei in pareggio. Inserisci la tua offerta di spareggio (max ${myPlayer.credits} crediti).`}
                 </p>
                 <input
                   type="number"
@@ -507,7 +549,8 @@ export default function GamePage() {
                   onChange={e => setTiebreakAmount(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleSubmitTiebreak()}
                   className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                  placeholder="Importo spareggio"
+                  placeholder="La tua offerta"
+                  autoFocus
                 />
                 {tiebreakError && <p className="text-red-400 text-sm">{tiebreakError}</p>}
                 <button
@@ -553,7 +596,7 @@ export default function GamePage() {
         )}
       </div>
 
-      {/* Obiettivi personali — collassabile */}
+      {/* Obiettivi personali */}
       <div className="bg-gray-900 rounded-2xl overflow-hidden">
         <button
           onClick={handleToggleObjectives}
@@ -573,11 +616,9 @@ export default function GamePage() {
             {!objectivesLoaded && (
               <p className="text-gray-500 text-xs animate-pulse">Caricamento...</p>
             )}
-
             {objectivesLoaded && objectives.length === 0 && (
               <p className="text-gray-500 text-xs">Nessun obiettivo assegnato.</p>
             )}
-
             {objectives.length > 0 && (
               <div className="space-y-2 mt-3">
                 <p className="text-xs text-gray-500 uppercase tracking-wide">Obiettivi personali</p>
@@ -607,7 +648,6 @@ export default function GamePage() {
                 })}
               </div>
             )}
-
             {generalBonuses.length > 0 && (
               <div className="space-y-2 mt-3">
                 <p className="text-xs text-gray-500 uppercase tracking-wide">Bonus generali</p>
