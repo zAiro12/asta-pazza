@@ -588,7 +588,14 @@ export default function GamePage() {
                 </button>
               )}
               {!useMercatoNero && (
-                <input type="number" min={0} max={myPlayer?.credits} placeholder="La tua offerta" value={bidAmount}
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  min={0}
+                  max={myPlayer?.credits}
+                  placeholder="La tua offerta"
+                  value={bidAmount}
                   onChange={e => setBidAmount(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleBid()}
                   className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
