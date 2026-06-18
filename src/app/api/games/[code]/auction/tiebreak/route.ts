@@ -108,7 +108,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     await db
       .update(auctions)
       .set({
-        winnerId: undefined,
+        winnerId: null,
         winningBid: topTiebreak,
         tiedPlayerIds: nextTied,
         tiebreakRound: currentRound + 1,
