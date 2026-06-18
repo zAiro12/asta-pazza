@@ -86,6 +86,17 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     isMercatoNero: bid.isMercatoNero,
   }));
 
+  // Recupera i nomi dei giocatori per costruire le roundBids tipizzate
+  const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
+  const playerNameMap = new Map<number, string>(allPlayers.map(p => [p.id, p.name]));
+
+  const typedRoundBids = roundBids.map(b => ({
+    playerId: b.playerId,
+    playerName: playerNameMap.get(b.playerId) ?? `#${b.playerId}`,
+    amount: b.amount,
+    round: b.round,
+  }));
+
   const originalByPlayer = new Map<number, number>(typedBids.map(b => [b.playerId, b.amount]));
   const topTiebreak = Math.max(...roundBids.map(b => b.amount));
   const topBidders = roundBids.filter(b => b.amount === topTiebreak);
@@ -112,6 +123,8 @@ export async function POST(request: NextRequest, { params }: Ctx) {
       goodName: auctionGood?.name ?? '',
       turn: auction.turn,
       bids: typedBids,
+      roundBids: typedRoundBids,
+      tiebreakRound: currentRound,
       winnerId: null,
       winningBid: topTiebreak,
       details,
@@ -119,7 +132,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
       players: updatedPlayers,
     });
 
-    return NextResponse.json({ winnerId: null, winningBid: topTiebreak, details, tiedPlayerIds: nextTied, bids: typedBids });
+    return NextResponse.json({ winnerId: null, winningBid: topTiebreak, details, tiedPlayerIds: nextTied, bids: typedBids, roundBids: typedRoundBids });
   }
 
   const winnerId = topBidders[0].playerId;
@@ -157,6 +170,8 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     goodName: auctionGood?.name ?? '',
     turn: auction.turn,
     bids: typedBids,
+    roundBids: typedRoundBids,
+    tiebreakRound: currentRound,
     winnerId,
     winningBid: finalPrice,
     details,
@@ -164,5 +179,5 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     players: updatedPlayers,
   });
 
-  return NextResponse.json({ winnerId, winningBid: finalPrice, details, tiedPlayerIds: [], bids: typedBids });
+  return NextResponse.json({ winnerId, winningBid: finalPrice, details, tiedPlayerIds: [], bids: typedBids, roundBids: typedRoundBids });
 }
