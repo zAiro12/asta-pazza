@@ -68,7 +68,7 @@ function CategoryBadge({ name }: { name: string }) {
     <span
       className={`inline-block whitespace-nowrap text-xs font-semibold px-2 py-0.5 rounded-full border mt-1 ${bg} ${text} ${border}`}
     >
-      &#x25CF; {name}
+      {name}
     </span>
   );
 }
