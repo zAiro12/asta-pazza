@@ -335,7 +335,8 @@ export default function GamePage() {
       // Coerce to number[] to prevent string/number type mismatch from DB/Pusher payload
       const tiedIds = (data.tiedPlayerIds ?? []).map(Number);
       setTiedPlayerIds(tiedIds);
-      const myId = sessionIdRef.current;
+      // Fallback to localStorage in case sessionIdRef is not yet set (race condition on mount)
+      const myId = sessionIdRef.current ?? loadSession(code)?.id ?? null;
 
       if (tiedIds.length > 0 && myId !== null && tiedIds.includes(Number(myId))) {
         // Nuovo round di spareggio: salva la history usando le roundBids del round appena concluso
@@ -397,7 +398,7 @@ export default function GamePage() {
       }
 
       if (data?.completedObjectivesByPlayer) {
-        const myId = sessionIdRef.current;
+        const myId = sessionIdRef.current ?? loadSession(code)?.id ?? null;
         if (myId) {
           const myCompleted = data.completedObjectivesByPlayer[myId];
           if (myCompleted) {
