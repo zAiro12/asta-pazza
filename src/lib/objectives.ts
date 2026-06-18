@@ -14,59 +14,32 @@ export type ObjectiveCondition =
   | { type: 'min_total_value'; amount: number }
   | { type: 'always' }
   // ── Nuovi tipi per comuni e rari ──────────────────────────────────────────
-  /** Almeno `count` beni della categoria base + almeno `otherCount` beni di `otherCategoryId` */
   | { type: 'min_base_category_goods_and_category'; count: number; otherCategoryId: number; otherCount: number }
-  /** Almeno `count` beni con baseValue >= `value` */
   | { type: 'min_good_value'; value: number; count: number }
-  /** Almeno `credits` crediti E almeno `goods` beni */
   | { type: 'min_credits_and_goods'; credits: number; goods: number }
-  /** Almeno `collections` mini-collezioni E almeno `credits` crediti */
   | { type: 'min_mini_collections_and_credits'; collections: number; credits: number }
-  /** Almeno `count` mini-collezioni fuori dalla categoria base */
   | { type: 'min_mini_collections_outside_base'; count: number }
-  /** Almeno `count` mini-collezioni totali */
   | { type: 'min_mini_collections'; count: number }
-  /** Almeno `count` collezioni complete */
   | { type: 'min_complete_collections'; count: number }
-  /** Almeno `collections` complete + almeno `credits` crediti */
   | { type: 'min_complete_collections_and_credits'; collections: number; credits: number }
-  /** Almeno `collections` mini + `extraGoods` beni extra */
   | { type: 'min_mini_collections_and_goods'; collections: number; extraGoods: number }
-  /** Almeno `collections` mini + `complete` complete + `credits` crediti */
   | { type: 'complete_and_mini_and_credits'; complete: number; mini: number; credits: number }
-  /** Max `maxGoods` beni E almeno `credits` crediti */
   | { type: 'max_goods_and_min_credits'; maxGoods: number; credits: number }
-  /** Almeno `collections` mini E meno di `maxCredits` crediti */
   | { type: 'min_mini_collections_and_max_credits'; collections: number; maxCredits: number }
-  /** Almeno `categories` categorie diverse E almeno `credits` crediti */
   | { type: 'min_categories_and_credits'; categories: number; credits: number }
-  /** Almeno `categoriesCount` categorie con almeno `goodsPerCategory` beni ciascuna */
   | { type: 'min_categories_with_count'; categoriesCount: number; goodsPerCategory: number }
-  /** Multi-categoria: array di { categoryId, count } tutti soddisfatti */
   | { type: 'multi_category_min'; requirements: { categoryId: number; count: number }[] }
-  /** Bene specifico + array di categorie minime */
   | { type: 'specific_good_and_categories'; goodId: number; categories: { categoryId: number; count: number }[] }
-  /** Senza Scugnizzu e almeno `credits` crediti */
   | { type: 'no_scugnizzu_and_min_credits'; credits: number }
-  /** Il giocatore con più crediti */
   | { type: 'most_credits' }
-  /** Il giocatore col bene col valore base più alto */
   | { type: 'highest_value_good' }
-  /** Possiede il bene di valore più alto in almeno `count` categorie */
   | { type: 'top_good_in_categories'; count: number }
-  /** Almeno 2 della base, 2 di un'altra qualsiasi, 1 di un'altra ancora */
   | { type: 'conglomerato' }
-  /** Almeno 2 della base + 2 di qualsiasi altra categoria */
   | { type: 'base_plus_other'; baseCount: number; otherCount: number }
-  /** Nessuna categoria con più di 1 bene; vale 15 * n categorie con 1 bene */
   | { type: 'equilibrio_perfetto' }
-  /** 2 maggioranze di categoria */
   | { type: 'min_majorities'; count: number }
-  /** 1 collezione completa + 1 mini + 15 crediti */
   | { type: 'tycoon' }
-  /** 1 bene 25+, 2 beni <=20 */
   | { type: 'elite_collector' }
-  /** 2 della propria categoria + 2 di altre 2 categorie diverse */
   | { type: 'magnate_culturale' };
 
 export interface ObjectiveRow {
@@ -78,13 +51,38 @@ export interface ObjectiveRow {
   condition: ObjectiveCondition | null;
 }
 
+/**
+ * Tipi di condizione che richiedono il confronto tra tutti i giocatori
+ * e/o che possono ancora cambiare fino all'ultimo turno.
+ * Questi obiettivi vengono valutati SOLO a fine partita.
+ */
+const END_OF_GAME_CONDITION_TYPES = new Set([
+  'most_credits',
+  'highest_value_good',
+  'top_good_in_categories',
+  'min_majorities',
+  'tycoon',
+  'conglomerato',
+  'base_plus_other',
+  'equilibrio_perfetto',
+  'magnate_culturale',
+]);
+
+/**
+ * Restituisce true se il tipo di condizione è valutabile solo a fine partita
+ * (richiede confronto tra giocatori o dipende da assenza di acquisti futuri).
+ */
+export function isEndOfGameObjective(conditionType: string | null | undefined): boolean {
+  if (!conditionType) return false;
+  return END_OF_GAME_CONDITION_TYPES.has(conditionType);
+}
+
 /** Conta quante mini-collezioni (>=2 beni su 3) ha il giocatore */
 function countMiniCollections(goodsByCategory: Map<number, number>, goodsInCategory: Map<number, number>): number {
   let count = 0;
   for (const [catId, playerHas] of goodsByCategory) {
     const total = goodsInCategory.get(catId) ?? 3;
     if (playerHas >= 2 && playerHas < total) count++;
-    // NB: la collezione completa NON è una mini-collezione
   }
   return count;
 }
@@ -153,8 +151,6 @@ export function evaluateObjective(
       return total >= cond.amount;
     }
 
-    // ── Nuovi ────────────────────────────────────────────────────────────────
-
     case 'min_base_category_goods_and_category': {
       if (!player.baseCategoryId) return false;
       const baseOk = (goodsByCategory.get(player.baseCategoryId) ?? 0) >= cond.count;
@@ -194,7 +190,6 @@ export function evaluateObjective(
 
     case 'min_mini_collections_and_goods': {
       const totalGoods = player.goods.length;
-      // Beni NON in mini-collezioni
       let goodsInMini = 0;
       for (const [catId, playerHas] of goodsByCategory) {
         const total = goodsInCategory.get(catId) ?? 3;
@@ -250,7 +245,6 @@ export function evaluateObjective(
 
     case 'top_good_in_categories': {
       if (!allPlayers || allPlayers.length === 0) return false;
-      // Per ogni categoria, trova il valore più alto tra tutti i giocatori
       const maxValueInCat = new Map<number, number>();
       for (const p of allPlayers) {
         for (const g of p.goods) {
@@ -285,12 +279,10 @@ export function evaluateObjective(
     }
 
     case 'equilibrio_perfetto': {
-      // Nessuna categoria con >1 bene
       return [...goodsByCategory.values()].every(cnt => cnt <= 1);
     }
 
     case 'min_majorities': {
-      // Una maggioranza: il giocatore ha più beni in quella categoria di qualsiasi altro
       if (!allPlayers || allPlayers.length === 0) return false;
       let majorities = 0;
       for (const [catId, playerHas] of goodsByCategory) {
@@ -303,7 +295,6 @@ export function evaluateObjective(
     }
 
     case 'tycoon': {
-      // 1 collezione completa + 1 maggioranza
       if (!allPlayers || allPlayers.length === 0) return false;
       if (completeCollections < 1) return false;
       let hasMajority = false;
@@ -339,14 +330,24 @@ export function evaluateObjective(
 
 /**
  * Ritorna gli id degli obiettivi completati da un giocatore.
+ * Se `onlyImmediate` è true, esclude i tipi end-of-game.
+ * Se `onlyEndOfGame` è true, include solo i tipi end-of-game.
  */
 export function getCompletedObjectiveIds(
   player: PlayerWithGoods,
   allObjectives: ObjectiveRow[],
   goodsInCategory: Map<number, number>,
   allPlayers?: PlayerWithGoods[],
+  options?: { onlyImmediate?: boolean; onlyEndOfGame?: boolean },
 ): number[] {
+  const { onlyImmediate = false, onlyEndOfGame = false } = options ?? {};
+
   return allObjectives
-    .filter(obj => evaluateObjective(player, obj, goodsInCategory, allPlayers))
+    .filter(obj => {
+      const condType = obj.condition?.type ?? null;
+      if (onlyImmediate && isEndOfGameObjective(condType)) return false;
+      if (onlyEndOfGame && !isEndOfGameObjective(condType)) return false;
+      return evaluateObjective(player, obj, goodsInCategory, allPlayers);
+    })
     .map(obj => obj.id);
 }

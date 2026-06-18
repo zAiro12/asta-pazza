@@ -1,17 +1,20 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
-import { games, players, playerGoods, goods, objectives, playerObjectives, events as eventsTable } from '@db/schema';
+import { games, players, playerGoods, goods, objectives, playerObjectives, events as eventsTable, playerObjectiveAssignments } from '@db/schema';
 import { eq, inArray } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { calculateScore } from '@/lib/scoring';
+import { getCompletedObjectiveIds } from '@/lib/objectives';
+import type { ObjectiveRow } from '@/lib/objectives';
 import type { PlayerWithGoods, Good, GameEvent } from '@/types/game';
 
 type Ctx = { params: Promise<{ code: string }> };
 
 /**
  * GET /api/games/[code]/results
- * Ritorna la classifica finale con punteggi dettagliati calcolati da scoring.ts.
- * Gli obiettivi completati vengono letti da player_objectives e passati a calculateScore.
+ * Prima di restituire i risultati, valuta e salva gli obiettivi END-OF-GAME
+ * (comparativi tra giocatori) che non erano stati valutati durante la partita.
+ * Poi ritorna la classifica finale con punteggi dettagliati.
  */
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { code } = await params;
@@ -23,21 +26,46 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 
   const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
 
-  // Beni posseduti per ogni giocatore
   const allPlayerGoods = await db
     .select({ pg: playerGoods, good: goods })
     .from(playerGoods)
     .innerJoin(goods, eq(playerGoods.goodId, goods.id))
     .where(eq(playerGoods.gameId, game.id));
 
-  // Obiettivi completati per ogni giocatore (già scritti da evaluate-objectives)
+  // Costruisce PlayerWithGoods per ogni giocatore
+  const playersWithGoods: PlayerWithGoods[] = allPlayers.map(player => {
+    const myGoods: Good[] = allPlayerGoods
+      .filter(r => r.pg.playerId === player.id)
+      .map(({ good }) => ({
+        id: good.id,
+        name: good.name,
+        categoryId: good.categoryId,
+        categoryName: (good as any).categoryName ?? '',
+        baseValue: good.baseValue,
+      }));
+    return {
+      id: player.id,
+      gameId: player.gameId,
+      name: player.name,
+      credits: player.credits,
+      baseCategoryId: player.baseCategoryId,
+      usedScugnizzu: player.usedScugnizzu ?? false,
+      usedMercatoNero: player.usedMercatoNero ?? false,
+      isHost: player.isHost,
+      goods: myGoods,
+    };
+  });
+
+  // ── Valuta e salva gli obiettivi END-OF-GAME ────────────────────────────────
+  await evaluateEndOfGameObjectives(db, game.id, game.selectedCategoryIds as number[], playersWithGoods);
+
+  // ── Legge tutti gli obiettivi completati (immediati + end-of-game) ──────────
   const allPlayerObjectives = await db
     .select({ po: playerObjectives, obj: objectives })
     .from(playerObjectives)
     .innerJoin(objectives, eq(playerObjectives.objectiveId, objectives.id))
     .where(eq(playerObjectives.gameId, game.id));
 
-  // Mappa playerId -> punti totali obiettivi
   const objectivePointsByPlayer = new Map<number, number>();
   for (const { po, obj } of allPlayerObjectives) {
     objectivePointsByPlayer.set(
@@ -46,7 +74,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     );
   }
 
-  // Eventi attivi (permanenti) della partita
+  // ── Eventi attivi ───────────────────────────────────────────────────────────
   const activeEventIds = (game.activeEventIds ?? []) as number[];
   let activeEvents: GameEvent[] = [];
   if (activeEventIds.length > 0) {
@@ -63,36 +91,9 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     }));
   }
 
-  // Costruisce la struttura PlayerWithGoods per ogni giocatore
-  const playersWithGoods: PlayerWithGoods[] = allPlayers.map(player => {
-    const myGoods: Good[] = allPlayerGoods
-      .filter(r => r.pg.playerId === player.id)
-      .map(({ good }) => ({
-        id: good.id,
-        name: good.name,
-        categoryId: good.categoryId,
-        categoryName: (good as any).categoryName ?? '',
-        baseValue: good.baseValue,
-      }));
-
-    return {
-      id: player.id,
-      gameId: player.gameId,
-      name: player.name,
-      credits: player.credits,
-      baseCategoryId: player.baseCategoryId,
-      usedScugnizzu: player.usedScugnizzu ?? false,
-      usedMercatoNero: player.usedMercatoNero ?? false,
-      isHost: player.isHost,
-      goods: myGoods,
-    };
-  });
-
+  // ── Calcola punteggi e classifica ──────────────────────────────────────────
   const results = playersWithGoods.map(player => {
-    // Punti obiettivi completati per questo giocatore
     const objectivesPoints = objectivePointsByPlayer.get(player.id) ?? 0;
-
-    // calculateScore ora riceve i punti obiettivi e li integra nel total
     const breakdown = calculateScore(player, playersWithGoods, activeEvents, objectivesPoints);
 
     return {
@@ -137,4 +138,83 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   results.sort((a, b) => b.score.total - a.score.total);
 
   return NextResponse.json({ game: { code: upperCode, status: game.status }, results });
+}
+
+/**
+ * Valuta e salva in player_objectives solo gli obiettivi END-OF-GAME
+ * (quelli comparativi che richiedono allPlayers).
+ * Idempotente — non sovrascrive completamenti già esistenti.
+ */
+async function evaluateEndOfGameObjectives(
+  db: ReturnType<typeof drizzle>,
+  gameId: number,
+  categoryIds: number[],
+  playersWithGoods: PlayerWithGoods[],
+): Promise<void> {
+  const allGoods = categoryIds.length > 0
+    ? await db.select().from(goods).where(inArray(goods.categoryId, categoryIds))
+    : [];
+
+  const goodsInCategory = new Map<number, number>();
+  for (const g of allGoods) {
+    goodsInCategory.set(g.categoryId, (goodsInCategory.get(g.categoryId) ?? 0) + 1);
+  }
+
+  const rawObjectives = await db.select().from(objectives);
+  const allObjectivesMap = new Map(rawObjectives.map(o => [o.id, o]));
+
+  const allAssignments = await db
+    .select()
+    .from(playerObjectiveAssignments)
+    .where(eq(playerObjectiveAssignments.gameId, gameId));
+
+  const existing = await db
+    .select()
+    .from(playerObjectives)
+    .where(eq(playerObjectives.gameId, gameId));
+  const existingKeys = new Set(existing.map(e => `${e.playerId}_${e.objectiveId}`));
+
+  const toInsert: { playerId: number; gameId: number; objectiveId: number }[] = [];
+
+  for (const player of playersWithGoods) {
+    const assignedObjectiveIds = allAssignments
+      .filter(a => a.playerId === player.id)
+      .map(a => a.objectiveId);
+
+    const assignedObjectives: ObjectiveRow[] = assignedObjectiveIds
+      .map(id => {
+        const o = allObjectivesMap.get(id);
+        if (!o) return null;
+        return {
+          id: o.id,
+          name: o.name,
+          type: o.type,
+          description: o.description,
+          rewardPoints: o.points,
+          condition: (o.condition as any) ?? null,
+        };
+      })
+      .filter(Boolean) as ObjectiveRow[];
+
+    // Solo obiettivi END-OF-GAME, con allPlayers per i comparativi
+    const completedIds = getCompletedObjectiveIds(
+      player,
+      assignedObjectives,
+      goodsInCategory,
+      playersWithGoods,
+      { onlyEndOfGame: true },
+    );
+
+    for (const objectiveId of completedIds) {
+      const key = `${player.id}_${objectiveId}`;
+      if (!existingKeys.has(key)) {
+        toInsert.push({ playerId: player.id, gameId, objectiveId });
+        existingKeys.add(key);
+      }
+    }
+  }
+
+  if (toInsert.length > 0) {
+    await db.insert(playerObjectives).values(toInsert);
+  }
 }
