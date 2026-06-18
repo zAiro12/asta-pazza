@@ -453,27 +453,29 @@ export default function GamePage() {
             )}
 
             {objectives.length > 0 && (
-              <div className="space-y-2">
+              <div className="space-y-2 mt-3">
                 <p className="text-xs text-gray-500 uppercase tracking-wide">Obiettivi personali</p>
                 {objectives.map(obj => {
                   const isCompleted = completedObjectiveIds.includes(obj.id);
                   return (
                     <div
                       key={obj.id}
-                      className={`border rounded-xl px-3 py-2 space-y-0.5 transition ${
+                      className={`border rounded-xl px-3 py-2 transition ${
                         isCompleted
                           ? 'border-green-500 bg-green-500/10 opacity-80'
                           : (RARITY_STYLE[obj.rarity] ?? 'border-gray-600 text-gray-300')
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold uppercase">
-                          {isCompleted ? '✅ Completato' : (RARITY_LABEL[obj.rarity] ?? obj.rarity)}
-                        </span>
-                        <span className="font-bold text-sm">+{obj.points} pt</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold uppercase">
+                            {isCompleted ? '✅ Completato' : (RARITY_LABEL[obj.rarity] ?? obj.rarity)}
+                          </span>
+                          <span className="font-bold text-sm">+{obj.points} pt</span>
+                        </div>
                       </div>
-                      <p className="font-semibold text-sm">{obj.name}</p>
-                      <p className="text-xs opacity-75">{obj.description}</p>
+                      <p className="font-semibold text-sm mt-0.5">{obj.name}</p>
+                      <p className="text-xs opacity-75 mt-0.5">{obj.description}</p>
                     </div>
                   );
                 })}
@@ -481,7 +483,7 @@ export default function GamePage() {
             )}
 
             {generalBonuses.length > 0 && (
-              <div className="space-y-2">
+              <div className="space-y-2 mt-3">
                 <p className="text-xs text-gray-500 uppercase tracking-wide">Bonus generali</p>
                 {generalBonuses.map((bonus, i) => (
                   <div key={i} className="border border-gray-600 bg-gray-800 rounded-xl px-3 py-2 space-y-0.5">
