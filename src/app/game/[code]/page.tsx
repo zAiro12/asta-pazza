@@ -338,8 +338,9 @@ export default function GamePage() {
       // Fallback to localStorage in case sessionIdRef is not yet set (race condition on mount)
       const myId = sessionIdRef.current ?? loadSession(code)?.id ?? null;
 
-      if (tiedIds.length > 0 && myId !== null && tiedIds.includes(Number(myId))) {
-        // Nuovo round di spareggio: salva la history usando le roundBids del round appena concluso
+      // FIX 2: guard esplicita su winnerId === null per evitare falsi positivi
+      if (data.winnerId === null && tiedIds.length > 0 && myId !== null && tiedIds.includes(Number(myId))) {
+        // FIX 1: usa data.tiebreakRound dal server invece di prev + 1 per evitare desincronizzazione
         if (data.roundBids && data.roundBids.length > 0) {
           const completedRound = data.tiebreakRound ?? 1;
           setTiebreakHistory(prev => {
@@ -351,8 +352,9 @@ export default function GamePage() {
             }];
           });
         }
-        setTiebreakRound(prev => prev + 1);
-        // Riapri il wizard con input e stato puliti
+        // FIX 1: sincronizza il round con il valore del server + 1
+        setTiebreakRound((data.tiebreakRound ?? 1) + 1);
+        // FIX 3: riapri il wizard con input e stato puliti (separato dal caso risolto)
         setTiebreakAmount('');
         setTiebreakSubmitted(false);
         setTiebreakError('');
@@ -360,6 +362,7 @@ export default function GamePage() {
         setShowTiebreakModal(true);
         showToast('⚠️ Ancora pareggio! Nuovo spareggio...', 'orange');
       } else {
+        // FIX 3: caso risolto — chiudi sempre il modal (nessun pareggio attivo)
         setShowTiebreakModal(false);
       }
 
