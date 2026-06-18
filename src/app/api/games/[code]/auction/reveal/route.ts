@@ -6,13 +6,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
 import { resolveAuction } from '@/lib/auction';
 import type { Bid } from '@/types/game';
+import { validateSession } from '@/lib/session';
 
 type Ctx = { params: Promise<{ code: string }> };
 
 /**
  * POST /api/games/[code]/auction/reveal
  * Host rivela le offerte, assegna il bene al vincitore e scala i crediti.
- * Body: { playerId: number }
+ * Body: { playerId: number, sessionToken: string }
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
@@ -24,9 +25,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const [game] = await db.select().from(games).where(eq(games.code, upperCode));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
 
-  const [caller] = await db.select().from(players).where(eq(players.id, body.playerId));
-  if (!caller || caller.gameId !== game.id || !caller.isHost)
-    return NextResponse.json({ error: "Solo l'host pu\u00f2 rivelare le offerte" }, { status: 403 });
+  const caller = await validateSession(db, body.playerId, body.sessionToken, game.id);
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!caller.isHost) return NextResponse.json({ error: "Solo l'host pu\u00f2 rivelare le offerte" }, { status: 403 });
 
   const [auction] = await db
     .select()
@@ -62,6 +63,8 @@ export async function POST(request: NextRequest, { params }: Ctx) {
       status: 'revealing',
       winnerId: result.winnerId ?? undefined,
       winningBid: result.winningBid,
+      tiedPlayerIds: result.tiedPlayerIds ?? [],
+      tiebreakRound: 0,
     })
     .where(eq(auctions.id, auction.id));
 
@@ -99,6 +102,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     winnerId: result.winnerId,
     winningBid: result.winningBid,
     details: result.details,
+    tiedPlayerIds: result.tiedPlayerIds ?? [],
     players: updatedPlayers,
   });
 
@@ -106,6 +110,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     winnerId: result.winnerId,
     winningBid: result.winningBid,
     details: result.details,
+    tiedPlayerIds: result.tiedPlayerIds ?? [],
     bids: typedBids,
   });
 }

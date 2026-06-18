@@ -13,6 +13,7 @@ export function resolveAuction(bids: Bid[], players: Player[]): {
   winnerId: number | null;
   winningBid: number;
   details: string;
+  tiedPlayerIds?: number[];
 } {
   if (bids.length === 0) return { winnerId: null, winningBid: 0, details: 'Nessuna offerta' };
 
@@ -31,6 +32,7 @@ export function resolveAuction(bids: Bid[], players: Player[]): {
       winnerId: mnBid.playerId,
       winningBid: finalAmount,
       details: `Mercato Nero: ${mnBid.playerName} vince pagando ${finalAmount} (max altri: ${maxNormal})`,
+      tiedPlayerIds: [],
     };
   }
 
@@ -43,6 +45,7 @@ export function resolveAuction(bids: Bid[], players: Player[]): {
       winnerId: winners[0].playerId,
       winningBid: maxBid,
       details: `${winners[0].playerName} vince con ${maxBid} crediti`,
+      tiedPlayerIds: [],
     };
   }
 
@@ -50,7 +53,8 @@ export function resolveAuction(bids: Bid[], players: Player[]): {
   return {
     winnerId: null,
     winningBid: maxBid,
-    details: `Pareggio a ${maxBid} — nessun vincitore`,
+    details: `Pareggio a ${maxBid} — spareggio necessario`,
+    tiedPlayerIds: winners.map(w => w.playerId),
   };
 }
 

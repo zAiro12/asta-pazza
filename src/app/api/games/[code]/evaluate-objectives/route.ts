@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCompletedObjectiveIds } from '@/lib/objectives';
 import type { ObjectiveRow } from '@/lib/objectives';
 import type { PlayerWithGoods, Good } from '@/types/game';
+import { validateSession } from '@/lib/session';
 
 type Ctx = { params: Promise<{ code: string }> };
 
@@ -14,7 +15,7 @@ type Ctx = { params: Promise<{ code: string }> };
  * Chiamato una volta a fine partita (dal close route quando finished=true o dal frontend).
  * Valuta gli obiettivi di ogni giocatore e li scrive in player_objectives.
  * Idempotente: non riscrive obiettivi già assegnati.
- * Body: { playerId: number } — deve essere l'host
+ * Body: { playerId: number, sessionToken: string } — deve essere l'host
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
@@ -26,9 +27,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
   if (game.status !== 'finished') return NextResponse.json({ error: 'La partita non è ancora terminata' }, { status: 409 });
 
-  const [caller] = await db.select().from(players).where(eq(players.id, body.playerId));
-  if (!caller || caller.gameId !== game.id || !caller.isHost)
-    return NextResponse.json({ error: "Solo l'host può avviare la valutazione" }, { status: 403 });
+  const caller = await validateSession(db, body.playerId, body.sessionToken, game.id);
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!caller.isHost) return NextResponse.json({ error: "Solo l'host può avviare la valutazione" }, { status: 403 });
 
   // Carica tutti i giocatori
   const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));

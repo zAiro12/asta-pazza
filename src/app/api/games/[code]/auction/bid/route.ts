@@ -4,23 +4,24 @@ import { games, players, auctions, bids } from '@db/schema';
 import { eq, and } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
+import { validateSession } from '@/lib/session';
 
 type Ctx = { params: Promise<{ code: string }> };
 
 /**
  * POST /api/games/[code]/auction/bid
  * Il giocatore sottomette la propria offerta.
- * Body: { playerId: number, amount: number, isMercatoNero?: boolean }
+ * Body: { playerId: number, sessionToken: string, amount: number, isMercatoNero?: boolean }
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const upperCode = code.toUpperCase();
 
-  let body: { playerId: number; amount: number; isMercatoNero?: boolean };
+  let body: { playerId: number; amount: number; isMercatoNero?: boolean; sessionToken?: string };
   try { body = await request.json(); }
   catch { return NextResponse.json({ error: 'Body non valido' }, { status: 400 }); }
 
-  const { playerId, amount, isMercatoNero = false } = body;
+  const { playerId, amount, isMercatoNero = false, sessionToken } = body;
 
   // Per Mercato Nero l'amount è irrilevante, ma deve essere >= 0
   if (!playerId || amount === undefined || amount < 0)
@@ -33,9 +34,8 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
   if (game.status !== 'active') return NextResponse.json({ error: 'Partita non attiva' }, { status: 409 });
 
-  const [player] = await db.select().from(players).where(eq(players.id, playerId));
-  if (!player || player.gameId !== game.id)
-    return NextResponse.json({ error: 'Giocatore non trovato' }, { status: 403 });
+  const player = await validateSession(db, playerId, sessionToken, game.id);
+  if (!player) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   // Asta corrente in fase bidding
   const [auction] = await db

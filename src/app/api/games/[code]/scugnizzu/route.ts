@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
 import { SCUGNIZZU_CREDITS, SCUGNIZZU_PENALTY } from '@/lib/auction';
+import { validateSession } from '@/lib/session';
 
 type Ctx = { params: Promise<{ code: string }> };
 
@@ -12,17 +13,17 @@ type Ctx = { params: Promise<{ code: string }> };
  * POST /api/games/[code]/scugnizzu
  * Il giocatore usa il potere Scugnizzu: ottiene 30 crediti extra,
  * ma subisce una penalità di -15 punti a fine partita.
- * Body: { playerId: number }
+ * Body: { playerId: number, sessionToken: string }
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const upperCode = code.toUpperCase();
 
-  let body: { playerId: number };
+  let body: { playerId: number; sessionToken?: string };
   try { body = await request.json(); }
   catch { return NextResponse.json({ error: 'Body non valido' }, { status: 400 }); }
 
-  const { playerId } = body;
+  const { playerId, sessionToken } = body;
   if (!playerId) return NextResponse.json({ error: 'playerId obbligatorio' }, { status: 400 });
 
   const sql = neon(process.env.DATABASE_URL!);
@@ -32,9 +33,8 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
   if (game.status !== 'active') return NextResponse.json({ error: 'Partita non attiva' }, { status: 409 });
 
-  const [player] = await db.select().from(players).where(eq(players.id, playerId));
-  if (!player || player.gameId !== game.id)
-    return NextResponse.json({ error: 'Giocatore non trovato' }, { status: 403 });
+  const player = await validateSession(db, playerId, sessionToken, game.id);
+  if (!player) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   if (player.usedScugnizzu)
     return NextResponse.json({ error: 'Scugnizzu già usato in questa partita' }, { status: 409 });

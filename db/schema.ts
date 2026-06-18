@@ -63,6 +63,7 @@ export const players = pgTable('players', {
   id: serial('id').primaryKey(),
   gameId: integer('game_id').references(() => games.id).notNull(),
   name: text('name').notNull(),
+  sessionToken: text('session_token').notNull(),
   credits: integer('credits').notNull().default(150),
   baseCategoryId: integer('base_category_id').references(() => categories.id),
   usedScugnizzu: boolean('used_scugnizzu').notNull().default(false),
@@ -91,6 +92,8 @@ export const auctions = pgTable('auctions', {
   status: auctionStatusEnum('status').notNull().default('pending'),
   winnerId: integer('winner_id').references(() => players.id),
   winningBid: integer('winning_bid'),
+  tiedPlayerIds: jsonb('tied_player_ids').notNull().default('[]'),
+  tiebreakRound: integer('tiebreak_round').notNull().default(0),
   startedAt: timestamp('started_at'),
   finishedAt: timestamp('finished_at'),
 });
@@ -103,6 +106,26 @@ export const bids = pgTable('bids', {
   amount: integer('amount').notNull(),
   isMercatoNero: boolean('is_mercato_nero').notNull().default(false),
   submittedAt: timestamp('submitted_at').defaultNow(),
+});
+
+// ─── Offerte di spareggio ─────────────────────────────────────────────────────
+export const tiebreakBids = pgTable('tiebreak_bids', {
+  id: serial('id').primaryKey(),
+  auctionId: integer('auction_id').references(() => auctions.id).notNull(),
+  playerId: integer('player_id').references(() => players.id).notNull(),
+  amount: integer('amount').notNull(),
+  round: integer('round').notNull().default(1),
+  submittedAt: timestamp('submitted_at').defaultNow(),
+});
+
+// ─── Eventi partita attivati ──────────────────────────────────────────────────
+export const gameEvents = pgTable('game_events', {
+  id: serial('id').primaryKey(),
+  gameId: integer('game_id').references(() => games.id).notNull(),
+  eventId: integer('event_id').references(() => events.id).notNull(),
+  turn: integer('turn').notNull(),
+  isActive: boolean('is_active').notNull().default(true),
+  triggeredAt: timestamp('triggered_at').defaultNow(),
 });
 
 // ─── Obiettivi completati ─────────────────────────────────────────────────────

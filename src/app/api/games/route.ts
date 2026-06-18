@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/neon-http';
 import { games, players } from '@db/schema';
 import { eq } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
+import { randomBytes } from 'crypto';
 
 function generateCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -37,7 +38,13 @@ export async function POST(request: NextRequest) {
 
   const [host] = await db
     .insert(players)
-    .values({ gameId: game.id, name: hostName, credits: 150, isHost: true })
+    .values({
+      gameId: game.id,
+      name: hostName,
+      sessionToken: randomBytes(32).toString('hex'),
+      credits: 150,
+      isHost: true
+    })
     .returning();
 
   return NextResponse.json({ game, player: host }, { status: 201 });
