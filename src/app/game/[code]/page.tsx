@@ -683,9 +683,6 @@ export default function GamePage() {
                   {p.name}{p.isHost ? ' 👑' : ''}
                   {p.usedScugnizzu && <span className="text-orange-400 ml-1 text-xs">(Scugnizzu)</span>}
                   {p.usedMercatoNero && <span className="text-red-400 ml-1 text-xs">(MN usato)</span>}
-                  {p.baseCategoryId && categoriesMap[p.baseCategoryId] && (
-                    <span className="text-yellow-500 ml-1 text-xs">⭐ {categoriesMap[p.baseCategoryId]}</span>
-                  )}
                 </span>
                 <span className="text-gray-400">💰 {p.credits}</span>
               </button>
