@@ -1,3 +1,6 @@
 {
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "microfrontends": {
+    "enabled": false
+  }
 }
