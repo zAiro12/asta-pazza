@@ -7,7 +7,7 @@ import { pusherServer } from '@/lib/pusher-server';
 
 type Ctx = { params: Promise<{ code: string }> };
 
-// GET /api/games/[code] — stato partita + giocatori
+// GET /api/games/[code] — stato partita + giocatori + mappa categorie
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const sql = neon(process.env.DATABASE_URL!);
@@ -17,14 +17,19 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
 
   const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
-  return NextResponse.json({ game, players: allPlayers });
+
+  // Carica le categorie selezionate per restituire la mappa id -> name
+  const categoryIds = (game.selectedCategoryIds ?? []) as number[];
+  let categoriesMap: Record<number, string> = {};
+  if (categoryIds.length > 0) {
+    const cats = await db.select().from(categories).where(inArray(categories.id, categoryIds));
+    for (const c of cats) categoriesMap[c.id] = c.name;
+  }
+
+  return NextResponse.json({ game, players: allPlayers, categories: categoriesMap });
 }
 
 // PUT /api/games/[code] — aggiorna stato partita (es. avvia)
-// Quando status diventa 'active':
-//   1. Assegna una categoria base casuale a ogni giocatore (se non già assegnata)
-//   2. Assegna N obiettivi comuni e M rari a ogni giocatore
-//   3. Assegna 1 obiettivo categoria_base coerente con il baseCategoryId del giocatore
 export async function PUT(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const body = await request.json();
@@ -70,7 +75,7 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
       }
     }
 
-    // 2. Assegna obiettivi privati — solo se non già assegnati (idempotente)
+    // 2. Assegna obiettivi privati
     const existingAssignments = await db
       .select()
       .from(playerObjectiveAssignments)
@@ -89,26 +94,21 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
         return [...arr].sort(() => Math.random() - 0.5);
       }
 
-      // Ricarica giocatori con baseCategoryId già aggiornato
       const freshPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
 
       for (const player of freshPlayers) {
         const toInsert: { playerId: number; gameId: number; objectiveId: number; type: 'comune' | 'raro' | 'categoria_base' }[] = [];
 
-        // N obiettivi comuni
         const pickedCommon = shuffle(commonPool).slice(0, N);
         for (const obj of pickedCommon) {
           toInsert.push({ playerId: player.id, gameId: game.id, objectiveId: obj.id, type: 'comune' });
         }
 
-        // M obiettivi rari
         const pickedRare = shuffle(rarePool).slice(0, M);
         for (const obj of pickedRare) {
           toInsert.push({ playerId: player.id, gameId: game.id, objectiveId: obj.id, type: 'raro' });
         }
 
-        // 1 obiettivo categoria_base: preferisce quelli con condition.categoryId === baseCategoryId del giocatore.
-        // Se non ne esiste uno specifico, cade back su un obiettivo categoria_base generico casuale.
         if (basePool.length > 0) {
           const specificPool = player.baseCategoryId
             ? basePool.filter(o => {
@@ -130,11 +130,18 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
       }
     }
 
-    // Broadcast game-started
+    // Broadcast game-started con mappa categorie
     const updatedPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
+    const categoryIds2 = game.selectedCategoryIds as number[];
+    let categoriesMap: Record<number, string> = {};
+    if (categoryIds2.length > 0) {
+      const cats = await db.select().from(categories).where(inArray(categories.id, categoryIds2));
+      for (const c of cats) categoriesMap[c.id] = c.name;
+    }
     await pusherServer.trigger(`game-${code.toUpperCase()}`, 'game-started', {
       gameId: game.id,
       players: updatedPlayers,
+      categories: categoriesMap,
     });
   }
 

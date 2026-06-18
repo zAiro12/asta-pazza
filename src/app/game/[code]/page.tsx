@@ -19,6 +19,7 @@ interface Player {
   isHost: boolean;
   usedMercatoNero: boolean;
   usedScugnizzu: boolean;
+  baseCategoryId: number | null;
 }
 
 interface AuctionState {
@@ -112,6 +113,7 @@ export default function GamePage() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [auction, setAuction] = useState<AuctionState | null>(null);
   const [phase, setPhase] = useState<'waiting' | 'bidding' | 'revealing' | 'finished'>('waiting');
+  const [categoriesMap, setCategoriesMap] = useState<Record<number, string>>({});
 
   const [lastTurn, setLastTurn] = useState<number | null>(null);
   const [lastTotalTurns, setLastTotalTurns] = useState<number | null>(null);
@@ -173,7 +175,6 @@ export default function GamePage() {
     }, 1000);
   }, [stopTimer]);
 
-  // Carica (o ricarica) obiettivi: ricarica se objectivesLoaded=false o se force=true
   const loadObjectives = useCallback(async (playerId: number, force = false) => {
     if (objectivesLoaded && !force) return;
     try {
@@ -184,7 +185,6 @@ export default function GamePage() {
       setObjectives(personal);
       setGeneralBonuses(data.generalBonuses ?? []);
       setCompletedObjectiveIds(data.completed ?? []);
-      // Marca come caricato solo se abbiamo effettivamente dati (o se il giocatore non ha obiettivi)
       if (personal.length > 0 || force) setObjectivesLoaded(true);
     } catch { /* silenzioso */ }
   }, [code, objectivesLoaded]);
@@ -193,7 +193,6 @@ export default function GamePage() {
     const next = !showObjectives;
     setShowObjectives(next);
     if (next && myPlayer) {
-      // Ricarica sempre quando si apre il pannello, così si aggiorna lo stato completati
       loadObjectives(myPlayer.id, true);
     }
   }
@@ -217,6 +216,7 @@ export default function GamePage() {
       setPlayers(gameData.players ?? []);
       setTotalPlayers((gameData.players ?? []).length);
       if (gameData.game?.totalTurns) setLastTotalTurns(gameData.game.totalTurns);
+      if (gameData.categories) setCategoriesMap(gameData.categories);
 
       if (auctionRes.ok) {
         const aData = await auctionRes.json();
@@ -290,7 +290,6 @@ export default function GamePage() {
       setRevealedBids(data.bids); setWinnerId(data.winnerId); setWinningBid(data.winningBid);
       setResultDetails(data.details); setPlayers(data.players);
       setMyPlayer(prev => data.players.find(p => p.id === prev?.id) ?? prev);
-      // Salva subito in storico con il nome già disponibile
       if (data.winnerId && data.goodName) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
@@ -311,20 +310,17 @@ export default function GamePage() {
     }) => {
       setPhase('waiting'); setAuction(null);
 
-      // Storico: aggiorna solo se il nome non era già presente da bids-revealed
       if (data?.winnerId && data?.goodName) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
           const alreadyIn = existing.some(e => e.turn === data.turn);
           if (alreadyIn) {
-            // aggiorna il nome se era rimasto vuoto
             return { ...prev, [data.winnerId!]: existing.map(e => e.turn === data.turn && !e.goodName ? { ...e, goodName: data.goodName! } : e) };
           }
           return { ...prev, [data.winnerId!]: [...existing, { goodName: data.goodName!, pricePaid: data.winningBid ?? 0, turn: data.turn ?? 0 }] };
         });
       }
 
-      // Aggiorna obiettivi completati per il giocatore corrente
       if (data?.completedObjectivesByPlayer) {
         const myId = session?.id;
         if (myId) {
@@ -333,7 +329,6 @@ export default function GamePage() {
             setCompletedObjectiveIds(prev => {
               const newIds = myCompleted.filter(id => !prev.includes(id));
               if (newIds.length === 0) return prev;
-              // Toast per ogni nuovo obiettivo completato
               newIds.forEach(() => showToast('🏆 Obiettivo completato!', 'green'));
               return [...prev, ...newIds];
             });
@@ -397,6 +392,7 @@ export default function GamePage() {
   const mercatoNeroWinner = winnerId ? revealedBids.find(b => b.playerId === winnerId && b.isMercatoNero) : null;
   const displayTurn = auction?.turn ?? lastTurn;
   const displayTotalTurns = auction?.totalTurns ?? lastTotalTurns;
+  const myBaseCategoryName = myPlayer?.baseCategoryId ? (categoriesMap[myPlayer.baseCategoryId] ?? null) : null;
 
   return (
     <main className="min-h-screen bg-gray-950 text-white p-4 flex flex-col gap-4 max-w-lg mx-auto">
@@ -409,15 +405,26 @@ export default function GamePage() {
         <span className="font-mono text-yellow-400 tracking-widest">{code}</span>
       </div>
 
-      {/* Crediti e turno */}
-      <div className="bg-gray-900 rounded-2xl px-4 py-3 flex items-center justify-between">
-        <span className="text-gray-400 text-sm">
-          Turno <span className="text-white font-bold">{displayTurn ?? '—'}</span>
-          {displayTotalTurns ? <span className="text-gray-500"> / {displayTotalTurns}</span> : null}
-        </span>
-        <span className="text-sm">
-          💰 <span className="font-bold text-yellow-400">{myPlayer?.credits ?? '—'}</span> crediti
-        </span>
+      {/* Crediti, turno e categoria base */}
+      <div className="bg-gray-900 rounded-2xl px-4 py-3 space-y-1">
+        <div className="flex items-center justify-between">
+          <span className="text-gray-400 text-sm">
+            Turno <span className="text-white font-bold">{displayTurn ?? '—'}</span>
+            {displayTotalTurns ? <span className="text-gray-500"> / {displayTotalTurns}</span> : null}
+          </span>
+          <span className="text-sm">
+            💰 <span className="font-bold text-yellow-400">{myPlayer?.credits ?? '—'}</span> crediti
+          </span>
+        </div>
+        {myBaseCategoryName && (
+          <div className="flex items-center gap-2 pt-1 border-t border-gray-800">
+            <span className="text-xs text-gray-400">⭐ Categoria base:</span>
+            <span className="text-xs font-bold text-yellow-300 bg-yellow-500/10 border border-yellow-500/30 px-2 py-0.5 rounded-full">
+              {myBaseCategoryName}
+            </span>
+            <span className="text-xs text-gray-500">(+10 pt per ogni bene)</span>
+          </div>
+        )}
       </div>
 
       {/* Obiettivi personali — collassabile */}
@@ -561,6 +568,9 @@ export default function GamePage() {
             <p className="text-gray-400 text-sm">In vendita</p>
             <h2 className="text-2xl font-bold">{auction.good.name}</h2>
             <p className="text-yellow-400 font-semibold">Valore base: {auction.good.baseValue} pt</p>
+            {myBaseCategoryName && auction.good.categoryId === myPlayer?.baseCategoryId && (
+              <p className="text-yellow-300 text-xs">⭐ Appartiene alla tua categoria base! +10 pt extra</p>
+            )}
           </div>
           <div className="text-center">
             <span className={`text-4xl font-mono font-bold ${timerColor}`}>{timeLeft}s</span>
@@ -673,6 +683,9 @@ export default function GamePage() {
                   {p.name}{p.isHost ? ' 👑' : ''}
                   {p.usedScugnizzu && <span className="text-orange-400 ml-1 text-xs">(Scugnizzu)</span>}
                   {p.usedMercatoNero && <span className="text-red-400 ml-1 text-xs">(MN usato)</span>}
+                  {p.baseCategoryId && categoriesMap[p.baseCategoryId] && (
+                    <span className="text-yellow-500 ml-1 text-xs">⭐ {categoriesMap[p.baseCategoryId]}</span>
+                  )}
                 </span>
                 <span className="text-gray-400">💰 {p.credits}</span>
               </button>
