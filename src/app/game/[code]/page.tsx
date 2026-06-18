@@ -484,17 +484,22 @@ export default function GamePage() {
   }
 
   async function handleSubmitTiebreak() {
-    if (!myPlayer || !session?.sessionToken) return;
+    // FIX: usa loadSession come fallback per evitare race condition su mount
+    // (session state potrebbe essere ancora null se il modale si apre prima che setSession() venga processato)
+    const resolvedSession = session ?? loadSession(code);
+    const resolvedPlayer = myPlayer;
+    if (!resolvedPlayer || !resolvedSession?.sessionToken) return;
+
     const amount = parseInt(tiebreakAmount);
     if (isNaN(amount) || amount < 0) { setTiebreakError('Inserisci un importo valido'); return; }
-    if (amount > myPlayer.credits) { setTiebreakError('Crediti insufficienti'); return; }
+    if (amount > resolvedPlayer.credits) { setTiebreakError('Crediti insufficienti'); return; }
 
     setTiebreakSubmitting(true);
     setTiebreakError('');
     const res = await fetch(`/api/games/${code}/auction/tiebreak`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: myPlayer.id, sessionToken: session.sessionToken, amount }),
+      body: JSON.stringify({ playerId: resolvedPlayer.id, sessionToken: resolvedSession.sessionToken, amount }),
     });
     const data = await res.json();
     if (!res.ok) {
