@@ -4,6 +4,7 @@ import { games, players } from '@db/schema';
 import { eq } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
+import { randomBytes } from 'crypto';
 
 type Ctx = { params: Promise<{ code: string }> };
 
@@ -41,7 +42,13 @@ export async function POST(request: NextRequest, { params }: Ctx) {
 
   const [player] = await db
     .insert(players)
-    .values({ gameId: game.id, name: playerName, credits: 150, isHost })
+    .values({
+      gameId: game.id,
+      name: playerName,
+      sessionToken: randomBytes(32).toString('hex'),
+      credits: 150,
+      isHost
+    })
     .returning();
 
   const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));

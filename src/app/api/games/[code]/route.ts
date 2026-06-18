@@ -4,6 +4,7 @@ import { games, players, categories, objectives, playerObjectiveAssignments } fr
 import { eq, inArray, and } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
+import { validateSession } from '@/lib/session';
 
 type Ctx = { params: Promise<{ code: string }> };
 
@@ -34,8 +35,8 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const body = await request.json();
 
-  if (!body.status) {
-    return NextResponse.json({ error: 'Campo status obbligatorio' }, { status: 400 });
+  if (!body.status || !body.playerId) {
+    return NextResponse.json({ error: 'Campi status e playerId obbligatori' }, { status: 400 });
   }
 
   const sql = neon(process.env.DATABASE_URL!);
@@ -53,6 +54,10 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
     .returning();
 
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
+
+  const caller = await validateSession(db, body.playerId, body.sessionToken, game.id);
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!caller.isHost) return NextResponse.json({ error: "Solo l'host può aggiornare la partita" }, { status: 403 });
 
   if (body.status === 'active') {
     const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));

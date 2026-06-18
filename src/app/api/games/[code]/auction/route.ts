@@ -1,11 +1,12 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
-import { games, players, auctions, bids, goods, playerGoods, events } from '@db/schema';
+import { games, players, auctions, bids, goods, playerGoods, events, gameEvents } from '@db/schema';
 import { eq, inArray, and } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
 import { resolveAuction, isEventTurn, AUCTION_TIMER_SECONDS } from '@/lib/auction';
 import type { Bid, EventEffect } from '@/types/game';
+import { validateSession } from '@/lib/session';
 
 type Ctx = { params: Promise<{ code: string }> };
 
@@ -51,7 +52,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
  *   - permanente  → aggiunto ad activeEventIds
  *   - istantaneo  → applicato subito (es. instant_credits scala/aggiunge crediti)
  *   - segreto     → trasmesso ma non attivo permanentemente
- * Body: { playerId: number }
+ * Body: { playerId: number, sessionToken: string }
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
@@ -63,9 +64,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
   if (game.status !== 'active') return NextResponse.json({ error: 'Partita non attiva' }, { status: 409 });
 
-  const [caller] = await db.select().from(players).where(eq(players.id, body.playerId));
-  if (!caller || caller.gameId !== game.id || !caller.isHost)
-    return NextResponse.json({ error: "Solo l'host può avviare le aste" }, { status: 403 });
+  const caller = await validateSession(db, body.playerId, body.sessionToken, game.id);
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!caller.isHost) return NextResponse.json({ error: "Solo l'host può avviare le aste" }, { status: 403 });
 
   const [active] = await db
     .select()
@@ -127,6 +128,13 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     if (availableEvents.length > 0) {
       triggeredEvent = availableEvents[Math.floor(Math.random() * availableEvents.length)];
       const effect = triggeredEvent.effect as EventEffect;
+
+      await db.insert(gameEvents).values({
+        gameId: game.id,
+        eventId: triggeredEvent.id,
+        turn: nextTurn,
+        isActive: true,
+      });
 
       if (triggeredEvent.type === 'permanente') {
         // Rimane attivo per tutto il resto della partita

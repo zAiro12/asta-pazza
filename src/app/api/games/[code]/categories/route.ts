@@ -4,26 +4,27 @@ import { games, players, categories, goods } from '@db/schema';
 import { eq, inArray } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
+import { validateSession } from '@/lib/session';
 
 type Ctx = { params: Promise<{ code: string }> };
 
 /**
  * POST /api/games/[code]/categories
  * Solo l'host può selezionare le categorie mentre la partita è in stato "lobby".
- * Body: { playerId: number, selectedCategoryIds: number[] }
+ * Body: { playerId: number, sessionToken: string, selectedCategoryIds: number[] }
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const upperCode = code.toUpperCase();
 
-  let body: { playerId: number; selectedCategoryIds: number[] };
+  let body: { playerId: number; sessionToken?: string; selectedCategoryIds: number[] };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: 'Body JSON non valido' }, { status: 400 });
   }
 
-  const { playerId, selectedCategoryIds } = body;
+  const { playerId, sessionToken, selectedCategoryIds } = body;
 
   // Validazione input
   if (!playerId || !Array.isArray(selectedCategoryIds) || selectedCategoryIds.length === 0) {
@@ -49,14 +50,8 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   }
 
   // Verifica che chi chiama sia l'host
-  const [caller] = await db
-    .select()
-    .from(players)
-    .where(eq(players.id, playerId));
-
-  if (!caller || caller.gameId !== game.id) {
-    return NextResponse.json({ error: 'Giocatore non trovato in questa partita' }, { status: 403 });
-  }
+  const caller = await validateSession(db, playerId, sessionToken, game.id);
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   if (!caller.isHost) {
     return NextResponse.json({ error: "Solo l'host può selezionare le categorie" }, { status: 403 });

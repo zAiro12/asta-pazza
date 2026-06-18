@@ -8,6 +8,7 @@ interface Player {
   id: number;
   name: string;
   isHost: boolean;
+  sessionToken: string;
 }
 
 interface Category {
@@ -25,7 +26,10 @@ function saveSession(code: string, player: Player) {
 function loadSession(code: string): Player | null {
   try {
     const raw = localStorage.getItem(getSessionKey(code));
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.sessionToken) return null;
+    return parsed;
   } catch { return null; }
 }
 function clearSession(code: string) {
@@ -181,7 +185,7 @@ export default function LobbyPage() {
     const resCat = await fetch(`/api/games/${code}/categories`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: myPlayer.id, selectedCategoryIds }),
+      body: JSON.stringify({ playerId: myPlayer.id, sessionToken: myPlayer.sessionToken, selectedCategoryIds }),
     });
     if (!resCat.ok) {
       const d = await resCat.json();
@@ -192,7 +196,13 @@ export default function LobbyPage() {
     await fetch(`/api/games/${code}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'active', commonObjectivesCount: commonCount, rareObjectivesCount: rareCount }),
+      body: JSON.stringify({
+        status: 'active',
+        playerId: myPlayer.id,
+        sessionToken: myPlayer.sessionToken,
+        commonObjectivesCount: commonCount,
+        rareObjectivesCount: rareCount
+      }),
     });
   }
 

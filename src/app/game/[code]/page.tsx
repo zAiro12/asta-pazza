@@ -22,6 +22,12 @@ interface Player {
   baseCategoryId: number | null;
 }
 
+interface SessionPlayer {
+  id: number;
+  name: string;
+  sessionToken: string;
+}
+
 interface AuctionState {
   id: number;
   turn: number;
@@ -72,10 +78,13 @@ const GENERAL_BONUS_POINTS: Record<string, string> = {
 function getSessionKey(code: string) {
   return `asta-player-${code}`;
 }
-function loadSession(code: string): { id: number; name: string; isHost: boolean } | null {
+function loadSession(code: string): SessionPlayer | null {
   try {
     const raw = localStorage.getItem(getSessionKey(code));
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.sessionToken) return null;
+    return parsed;
   } catch { return null; }
 }
 
@@ -110,6 +119,7 @@ export default function GamePage() {
   const code = (params.code as string).toUpperCase();
 
   const [myPlayer, setMyPlayer] = useState<Player | null>(null);
+  const [session, setSession] = useState<SessionPlayer | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [auction, setAuction] = useState<AuctionState | null>(null);
   const [phase, setPhase] = useState<'waiting' | 'bidding' | 'revealing' | 'finished'>('waiting');
@@ -137,6 +147,13 @@ export default function GamePage() {
 
   const [activeEvents, setActiveEvents] = useState<GameEvent[]>([]);
   const [showEventsBanner, setShowEventsBanner] = useState(false);
+
+  const [tiedPlayerIds, setTiedPlayerIds] = useState<number[]>([]);
+  const [showTiebreakModal, setShowTiebreakModal] = useState(false);
+  const [tiebreakAmount, setTiebreakAmount] = useState('');
+  const [tiebreakSubmitting, setTiebreakSubmitting] = useState(false);
+  const [tiebreakSubmitted, setTiebreakSubmitted] = useState(false);
+  const [tiebreakError, setTiebreakError] = useState('');
 
   const [goodsHistory, setGoodsHistory] = useState<Record<number, HistoryEntry[]>>({});
   const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
@@ -200,12 +217,14 @@ export default function GamePage() {
   // Init
   useEffect(() => {
     const session = loadSession(code);
-    if (!session) { router.push(`/lobby/${code}`); return; }
+    if (!session?.sessionToken) { router.push(`/lobby/${code}`); return; }
+    setSession(session);
 
     async function init() {
-      const [gameRes, auctionRes] = await Promise.all([
+      const [gameRes, auctionRes, eventsRes] = await Promise.all([
         fetch(`/api/games/${code}`),
         fetch(`/api/games/${code}/auction`),
+        fetch(`/api/games/${code}/events/active`),
       ]);
       const gameData = await gameRes.json();
       if (!gameRes.ok) { router.push('/'); return; }
@@ -217,6 +236,12 @@ export default function GamePage() {
       setTotalPlayers((gameData.players ?? []).length);
       if (gameData.game?.totalTurns) setLastTotalTurns(gameData.game.totalTurns);
       if (gameData.categories) setCategoriesMap(gameData.categories);
+      if (eventsRes.ok) {
+        const evData = await eventsRes.json();
+        if (evData.events?.length) {
+          setActiveEvents(evData.events);
+        }
+      }
 
       if (auctionRes.ok) {
         const aData = await auctionRes.json();
@@ -236,6 +261,14 @@ export default function GamePage() {
           setPhase(aData.auction.status === 'revealing' ? 'revealing' : 'bidding');
           if (aData.auction.status === 'bidding') startTimer(45);
           if (aData.auction.status === 'revealing' && aData.bids) setRevealedBids(aData.bids);
+          const tiedIds: number[] = aData.auction.tiedPlayerIds ?? [];
+          setTiedPlayerIds(tiedIds);
+          if (aData.auction.status === 'revealing' && tiedIds.length > 0) {
+            if (session?.id && tiedIds.includes(session.id)) {
+              setShowTiebreakModal(true);
+            }
+            setResultDetails('Pareggio: spareggio in corso');
+          }
         }
       }
     }
@@ -268,6 +301,8 @@ export default function GamePage() {
       setPhase('bidding'); setHasBid(false); setBidAmount(''); setUseMercatoNero(false);
       setBidError(''); setRevealedBids([]); setWinnerId(null); setWinningBid(0);
       setResultDetails(''); setScugnizzuMessage(''); setConfirmedCount(0);
+      setTiedPlayerIds([]); setShowTiebreakModal(false); setTiebreakSubmitted(false);
+      setTiebreakAmount(''); setTiebreakError('');
       startTimer(data.timerSeconds);
     });
 
@@ -275,12 +310,13 @@ export default function GamePage() {
       setConfirmedCount(data.confirmedCount); setTotalPlayers(data.totalPlayers);
     });
 
-    channel.bind('bids-revealed', (data: {
+    const handleRevealLikeEvent = (data: {
       auctionId: number;
       bids: (Bid & { playerName: string })[];
       winnerId: number | null;
       winningBid: number;
       details: string;
+      tiedPlayerIds?: number[];
       players: Player[];
       goodId?: number;
       goodName?: string;
@@ -290,6 +326,17 @@ export default function GamePage() {
       setRevealedBids(data.bids); setWinnerId(data.winnerId); setWinningBid(data.winningBid);
       setResultDetails(data.details); setPlayers(data.players);
       setMyPlayer(prev => data.players.find(p => p.id === prev?.id) ?? prev);
+      const tiedIds = data.tiedPlayerIds ?? [];
+      setTiedPlayerIds(tiedIds);
+      const myId = session?.id;
+      if (tiedIds.length > 0 && myId && tiedIds.includes(myId)) {
+        setShowTiebreakModal(true);
+        setTiebreakSubmitted(false);
+        setTiebreakAmount('');
+        setTiebreakError('');
+      } else {
+        setShowTiebreakModal(false);
+      }
       if (data.winnerId && data.goodName) {
         setGoodsHistory(prev => {
           const existing = prev[data.winnerId!] ?? [];
@@ -298,7 +345,10 @@ export default function GamePage() {
           return { ...prev, [data.winnerId!]: [...existing, { goodName: data.goodName!, pricePaid: data.winningBid, turn: data.turn ?? 0 }] };
         });
       }
-    });
+    };
+
+    channel.bind('bids-revealed', handleRevealLikeEvent);
+    channel.bind('tiebreak-resolved', handleRevealLikeEvent);
 
     channel.bind('auction-closed', (data?: {
       goodId?: number;
@@ -350,14 +400,14 @@ export default function GamePage() {
   }, [code]);
 
   async function handleBid() {
-    if (!myPlayer || !auction) return;
+    if (!myPlayer || !auction || !session?.sessionToken) return;
     const amount = useMercatoNero ? 0 : parseInt(bidAmount);
     if (!useMercatoNero && (isNaN(amount) || amount < 0)) { setBidError('Inserisci un importo valido'); return; }
     if (!useMercatoNero && amount > myPlayer.credits) { setBidError('Crediti insufficienti'); return; }
     setBidLoading(true); setBidError('');
     const res = await fetch(`/api/games/${code}/auction/bid`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: myPlayer.id, amount, isMercatoNero: useMercatoNero }),
+      body: JSON.stringify({ playerId: myPlayer.id, sessionToken: session.sessionToken, amount, isMercatoNero: useMercatoNero }),
     });
     const data = await res.json();
     if (!res.ok) { setBidError(data.error); setBidLoading(false); return; }
@@ -365,27 +415,67 @@ export default function GamePage() {
   }
 
   async function handleReveal() {
-    if (!myPlayer?.isHost) return;
-    await fetch(`/api/games/${code}/auction/reveal`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerId: myPlayer.id }) });
+    if (!myPlayer?.isHost || !session?.sessionToken) return;
+    await fetch(`/api/games/${code}/auction/reveal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: myPlayer.id, sessionToken: session.sessionToken })
+    });
   }
 
   async function handleClose() {
-    if (!myPlayer?.isHost) return;
-    await fetch(`/api/games/${code}/auction/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerId: myPlayer.id }) });
+    if (!myPlayer?.isHost || !session?.sessionToken) return;
+    await fetch(`/api/games/${code}/auction/close`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: myPlayer.id, sessionToken: session.sessionToken })
+    });
   }
 
   async function handleNextAuction() {
-    if (!myPlayer?.isHost) return;
-    await fetch(`/api/games/${code}/auction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerId: myPlayer.id }) });
+    if (!myPlayer?.isHost || !session?.sessionToken) return;
+    await fetch(`/api/games/${code}/auction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: myPlayer.id, sessionToken: session.sessionToken })
+    });
   }
 
   async function handleScugnizzu() {
-    if (!myPlayer || myPlayer.usedScugnizzu) return;
+    if (!myPlayer || myPlayer.usedScugnizzu || !session?.sessionToken) return;
     setScugnizzuLoading(true); setScugnizzuMessage('');
-    const res = await fetch(`/api/games/${code}/scugnizzu`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerId: myPlayer.id }) });
+    const res = await fetch(`/api/games/${code}/scugnizzu`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: myPlayer.id, sessionToken: session.sessionToken })
+    });
     const data = await res.json();
     setScugnizzuMessage(res.ok ? data.message : data.error);
     setScugnizzuLoading(false);
+  }
+
+  async function handleSubmitTiebreak() {
+    if (!myPlayer || !session?.sessionToken) return;
+    const amount = parseInt(tiebreakAmount);
+    if (isNaN(amount) || amount < 0) { setTiebreakError('Inserisci un importo valido'); return; }
+    if (amount > myPlayer.credits) { setTiebreakError('Crediti insufficienti'); return; }
+
+    setTiebreakSubmitting(true);
+    setTiebreakError('');
+    const res = await fetch(`/api/games/${code}/auction/tiebreak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: myPlayer.id, sessionToken: session.sessionToken, amount }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setTiebreakError(data.error ?? 'Errore nello spareggio');
+      setTiebreakSubmitting(false);
+      return;
+    }
+
+    setTiebreakSubmitted(true);
+    setTiebreakSubmitting(false);
   }
 
   const timerColor = timeLeft > 15 ? 'text-green-400' : timeLeft > 5 ? 'text-yellow-400' : 'text-red-400';
@@ -398,6 +488,40 @@ export default function GamePage() {
     <main className="min-h-screen bg-gray-950 text-white p-4 flex flex-col gap-4 max-w-lg mx-auto">
 
       {toast && <Toast message={toast.message} color={toast.color} />}
+      {showTiebreakModal && myPlayer && (
+        <div className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-gray-900 border border-yellow-500 rounded-2xl p-5 space-y-4">
+            <h3 className="text-lg font-bold text-yellow-400">⚖️ Spareggio</h3>
+            {!tiebreakSubmitted ? (
+              <>
+                <p className="text-sm text-gray-300">
+                  Sei in pareggio. Inserisci la tua offerta di spareggio (max {myPlayer.credits} crediti).
+                </p>
+                <input
+                  type="number"
+                  min={0}
+                  max={myPlayer.credits}
+                  value={tiebreakAmount}
+                  onChange={e => setTiebreakAmount(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSubmitTiebreak()}
+                  className="w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                  placeholder="Importo spareggio"
+                />
+                {tiebreakError && <p className="text-red-400 text-sm">{tiebreakError}</p>}
+                <button
+                  onClick={handleSubmitTiebreak}
+                  disabled={tiebreakSubmitting || !tiebreakAmount}
+                  className="w-full bg-yellow-400 text-gray-950 font-bold py-3 rounded-xl hover:bg-yellow-300 disabled:opacity-50 transition"
+                >
+                  {tiebreakSubmitting ? 'Invio...' : '✅ Conferma spareggio'}
+                </button>
+              </>
+            ) : (
+              <p className="text-sm text-gray-300">In attesa degli altri giocatori in pareggio...</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -669,12 +793,15 @@ export default function GamePage() {
               </li>
             ))}
           </ul>
-          {myPlayer?.isHost && (
+          {myPlayer?.isHost && tiedPlayerIds.length === 0 && (
             <button onClick={handleClose} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 transition">
               ➡️ Prossimo bene
             </button>
           )}
-          {!myPlayer?.isHost && <p className="text-center text-gray-500 text-sm">In attesa che l&apos;host continui...</p>}
+          {winnerId === null && tiedPlayerIds.length > 0 && !tiedPlayerIds.includes(myPlayer?.id ?? -1) && (
+            <p className="text-center text-gray-400 text-sm">⚖️ Spareggio in corso tra i giocatori in pareggio...</p>
+          )}
+          {!myPlayer?.isHost && tiedPlayerIds.length === 0 && <p className="text-center text-gray-500 text-sm">In attesa che l&apos;host continui...</p>}
         </div>
       )}
 

@@ -7,6 +7,7 @@ import { pusherServer } from '@/lib/pusher-server';
 import { getCompletedObjectiveIds } from '@/lib/objectives';
 import type { ObjectiveRow } from '@/lib/objectives';
 import type { PlayerWithGoods, Good } from '@/types/game';
+import { validateSession } from '@/lib/session';
 
 type Ctx = { params: Promise<{ code: string }> };
 
@@ -16,7 +17,7 @@ type Ctx = { params: Promise<{ code: string }> };
  * Valuta progressivamente gli obiettivi IMMEDIATI (non comparativi) ad ogni turno.
  * Gli obiettivi end-of-game (comparativi) vengono valutati solo in results/route.ts.
  * Se è l'ultimo turno: mette la partita in stato finished e fa broadcast game-finished.
- * Body: { playerId: number }
+ * Body: { playerId: number, sessionToken: string }
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
@@ -27,9 +28,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const [game] = await db.select().from(games).where(eq(games.code, upperCode));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
 
-  const [caller] = await db.select().from(players).where(eq(players.id, body.playerId));
-  if (!caller || caller.gameId !== game.id || !caller.isHost)
-    return NextResponse.json({ error: "Solo l'host può chiudere l'asta" }, { status: 403 });
+  const caller = await validateSession(db, body.playerId, body.sessionToken, game.id);
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!caller.isHost) return NextResponse.json({ error: "Solo l'host può chiudere l'asta" }, { status: 403 });
 
   const [auction] = await db
     .select()
@@ -37,6 +38,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     .where(and(eq(auctions.gameId, game.id), eq(auctions.status, 'revealing')))
     .limit(1);
   if (!auction) return NextResponse.json({ error: 'Nessuna asta in fase revealing' }, { status: 409 });
+  if (!auction.winnerId && Array.isArray(auction.tiedPlayerIds) && auction.tiedPlayerIds.length > 0) {
+    return NextResponse.json({ error: 'Spareggio in corso' }, { status: 409 });
+  }
 
   const [auctionGood] = await db.select().from(goods).where(eq(goods.id, auction.goodId));
 
