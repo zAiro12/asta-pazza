@@ -124,6 +124,7 @@ export default function GamePage() {
 
   const [myPlayer, setMyPlayer] = useState<Player | null>(null);
   const [session, setSession] = useState<SessionPlayer | null>(null);
+  const sessionIdRef = useRef<number | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [auction, setAuction] = useState<AuctionState | null>(null);
   const [phase, setPhase] = useState<'waiting' | 'bidding' | 'revealing' | 'finished'>('waiting');
@@ -223,6 +224,7 @@ export default function GamePage() {
     const session = loadSession(code);
     if (!session?.sessionToken) { router.push(`/lobby/${code}`); return; }
     setSession(session);
+    sessionIdRef.current = session.id;
 
     async function init() {
       const [gameRes, auctionRes, eventsRes] = await Promise.all([
@@ -331,7 +333,7 @@ export default function GamePage() {
       setMyPlayer(prev => data.players.find(p => p.id === prev?.id) ?? prev);
       const tiedIds = data.tiedPlayerIds ?? [];
       setTiedPlayerIds(tiedIds);
-      const myId = session?.id;
+      const myId = sessionIdRef.current;
 
       if (tiedIds.length > 0 && myId && tiedIds.includes(myId)) {
         // Nuovo round di spareggio: salva la history usando le roundBids del round appena concluso
@@ -393,7 +395,7 @@ export default function GamePage() {
       }
 
       if (data?.completedObjectivesByPlayer) {
-        const myId = session?.id;
+        const myId = sessionIdRef.current;
         if (myId) {
           const myCompleted = data.completedObjectivesByPlayer[myId];
           if (myCompleted) {
