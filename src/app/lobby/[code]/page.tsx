@@ -290,7 +290,7 @@ export default function LobbyPage() {
         {/* Giocatori */}
         <div>
           <p className="text-gray-400 text-sm mb-3">
-            {players.length} giocatore{players.length !== 1 ? 'i' : ''} connesso{players.length !== 1 ? 'i' : ''}
+            {players.length} giocator{players.length !== 1 ? 'i' : 'e'} conness{players.length !== 1 ? 'i' : 'o'}
           </p>
           <ul className="space-y-2">
             {players.map((p) => (
@@ -358,7 +358,7 @@ export default function LobbyPage() {
                 />
                 <span className="text-xs text-gray-500">per giocatore</span>
               </div>
-              <p className="text-xs text-gray-500">Ogni giocatore riceverà {commonCount} obiettivo{commonCount !== 1 ? 'i' : ''} comune{commonCount !== 1 ? 'i' : ''} e {rareCount} raro{rareCount !== 1 ? 'i' : ''} assegnati casualmente.</p>
+              <p className="text-xs text-gray-500">Ogni giocatore riceverà {commonCount} obiettiv{commonCount !== 1 ? 'i' : 'o'} comun{commonCount !== 1 ? 'i' : 'e'} e {rareCount} rar{rareCount !== 1 ? 'i' : 'o'} assegnati casualmente.</p>
             </div>
           </div>
         )}
