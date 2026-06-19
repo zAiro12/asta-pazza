@@ -1,6 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
-import { games, players, categories, objectives, playerObjectiveAssignments } from '@db/schema';
+import { games, players, categories, goods, objectives, playerObjectiveAssignments } from '@db/schema';
 import { eq, inArray, and } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { pusherServer } from '@/lib/pusher-server';
@@ -8,7 +8,7 @@ import { validateSession } from '@/lib/session';
 
 type Ctx = { params: Promise<{ code: string }> };
 
-// GET /api/games/[code] — stato partita + giocatori + mappa categorie
+// GET /api/games/[code] — stato partita + giocatori + mappa categorie + beni
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const sql = neon(process.env.DATABASE_URL!);
@@ -19,15 +19,17 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 
   const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
 
-  // Carica le categorie selezionate per restituire la mappa id -> name
   const categoryIds = (game.selectedCategoryIds ?? []) as number[];
   let categoriesMap: Record<number, string> = {};
+  let allGoods: { id: number; name: string; categoryId: number; baseValue: number }[] = [];
+
   if (categoryIds.length > 0) {
     const cats = await db.select().from(categories).where(inArray(categories.id, categoryIds));
     for (const c of cats) categoriesMap[c.id] = c.name;
+    allGoods = await db.select().from(goods).where(inArray(goods.categoryId, categoryIds));
   }
 
-  return NextResponse.json({ game, players: allPlayers, categories: categoriesMap });
+  return NextResponse.json({ game, players: allPlayers, categories: categoriesMap, goods: allGoods });
 }
 
 // PUT /api/games/[code] — aggiorna stato partita (es. avvia)

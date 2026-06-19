@@ -129,6 +129,8 @@ export default function GamePage() {
   const [auction, setAuction] = useState<AuctionState | null>(null);
   const [phase, setPhase] = useState<'waiting' | 'bidding' | 'revealing' | 'finished'>('waiting');
   const [categoriesMap, setCategoriesMap] = useState<Record<number, string>>({});
+  // Tutti i beni delle categorie selezionate: id → Good
+  const [allGoodsMap, setAllGoodsMap] = useState<Record<number, Good>>({});
 
   const [lastTurn, setLastTurn] = useState<number | null>(null);
   const [lastTotalTurns, setLastTotalTurns] = useState<number | null>(null);
@@ -162,13 +164,12 @@ export default function GamePage() {
   const [tiebreakRound, setTiebreakRound] = useState(1);
   const [tiebreakHistory, setTiebreakHistory] = useState<TiebreakRoundEntry[]>([]);
 
-  // Guard ref: viene incrementata ogni volta che Pusher apre un nuovo round di spareggio.
-  // handleSubmitTiebreak cattura il valore corrente prima della fetch e,
-  // al ritorno della risposta HTTP, lo confronta con quello attuale:
-  // se sono diversi, Pusher ha già gestito il nuovo round e non sovrascriviamo lo stato.
+  // Guard ref per la race condition HTTP vs Pusher nello spareggio
   const tiebreakEpochRef = useRef(0);
 
   const [goodsHistory, setGoodsHistory] = useState<Record<number, HistoryEntry[]>>({});
+  // Mappa goodId → playerId (per mostrare il proprietario nella category card)
+  const [goodOwnerMap, setGoodOwnerMap] = useState<Record<number, number>>({});
   const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
 
   const [toast, setToast] = useState<{ message: string; color: 'yellow' | 'orange' | 'red' | 'green' } | null>(null);
@@ -248,6 +249,14 @@ export default function GamePage() {
       setTotalPlayers((gameData.players ?? []).length);
       if (gameData.game?.totalTurns) setLastTotalTurns(gameData.game.totalTurns);
       if (gameData.categories) setCategoriesMap(gameData.categories);
+
+      // Carica tutti i beni delle categorie selezionate
+      if (gameData.goods && Array.isArray(gameData.goods)) {
+        const map: Record<number, Good> = {};
+        for (const g of gameData.goods as Good[]) map[g.id] = g;
+        setAllGoodsMap(map);
+      }
+
       if (eventsRes.ok) {
         const evData = await eventsRes.json();
         if (evData.events?.length) setActiveEvents(evData.events);
@@ -271,7 +280,6 @@ export default function GamePage() {
           setPhase(aData.auction.status === 'revealing' ? 'revealing' : 'bidding');
           if (aData.auction.status === 'bidding') startTimer(45);
           if (aData.auction.status === 'revealing' && aData.bids) setRevealedBids(aData.bids);
-          // Coerce to number[] to prevent string/number type mismatch from DB
           const tiedIds: number[] = (aData.auction.tiedPlayerIds ?? []).map(Number);
           setTiedPlayerIds(tiedIds);
           if (aData.auction.status === 'revealing' && tiedIds.length > 0) {
@@ -339,19 +347,14 @@ export default function GamePage() {
       setRevealedBids(data.bids); setWinnerId(data.winnerId); setWinningBid(data.winningBid);
       setResultDetails(data.details); setPlayers(data.players);
       setMyPlayer(prev => data.players.find(p => p.id === prev?.id) ?? prev);
-      // Coerce to number[] to prevent string/number type mismatch from DB/Pusher payload
       const tiedIds = (data.tiedPlayerIds ?? []).map(Number);
       setTiedPlayerIds(tiedIds);
-      // Fallback to localStorage in case sessionIdRef is not yet set (race condition on mount)
       const myId = sessionIdRef.current ?? loadSession(code)?.id ?? null;
 
-      // FIX 2: guard esplicita su winnerId === null per evitare falsi positivi
       if (data.winnerId === null && tiedIds.length > 0 && myId !== null && tiedIds.includes(Number(myId))) {
-        // FIX 1: usa data.tiebreakRound dal server invece di prev + 1 per evitare desincronizzazione
         if (data.roundBids && data.roundBids.length > 0) {
           const completedRound = data.tiebreakRound ?? 1;
           setTiebreakHistory(prev => {
-            // evita duplicati per lo stesso round
             if (prev.some(e => e.round === completedRound)) return prev;
             return [...prev, {
               round: completedRound,
@@ -359,20 +362,21 @@ export default function GamePage() {
             }];
           });
         }
-        // FIX 1: sincronizza il round con il valore del server + 1
         setTiebreakRound((data.tiebreakRound ?? 1) + 1);
-        // FIX 3: riapri il wizard con input e stato puliti (separato dal caso risolto)
         setTiebreakAmount('');
         setTiebreakSubmitted(false);
         setTiebreakError('');
         setTiebreakSubmitting(false);
-        // Incrementa l'epoch così l'eventuale risposta HTTP in volo viene ignorata
         tiebreakEpochRef.current += 1;
         setShowTiebreakModal(true);
         showToast('⚠️ Ancora pareggio! Nuovo spareggio...', 'orange');
       } else {
-        // FIX 3: caso risolto — chiudi sempre il modal (nessun pareggio attivo)
         setShowTiebreakModal(false);
+      }
+
+      if (data.winnerId && data.goodId) {
+        // Aggiorna mappa proprietari beni
+        setGoodOwnerMap(prev => ({ ...prev, [data.goodId!]: data.winnerId! }));
       }
 
       if (data.winnerId && data.goodName) {
@@ -493,7 +497,6 @@ export default function GamePage() {
   }
 
   async function handleSubmitTiebreak() {
-    // FIX: usa loadSession come fallback per evitare race condition su mount
     const resolvedSession = session ?? loadSession(code);
     const resolvedPlayer = myPlayer;
     if (!resolvedPlayer || !resolvedSession?.sessionToken) return;
@@ -502,8 +505,6 @@ export default function GamePage() {
     if (isNaN(amount) || amount < 0) { setTiebreakError('Inserisci un importo valido'); return; }
     if (amount > resolvedPlayer.credits) { setTiebreakError('Crediti insufficienti'); return; }
 
-    // Cattura l'epoch corrente: se Pusher arriva prima della risposta HTTP,
-    // tiebreakEpochRef.current sarà già incrementato e non sovrascriveremo lo stato.
     const epochAtSubmit = tiebreakEpochRef.current;
 
     setTiebreakSubmitting(true);
@@ -515,24 +516,36 @@ export default function GamePage() {
     });
     const data = await res.json();
     if (!res.ok) {
-      // Solo se siamo ancora nello stesso round (Pusher non ha già aperto il prossimo)
       if (tiebreakEpochRef.current === epochAtSubmit) {
         setTiebreakError(data.error ?? 'Errore nello spareggio');
         setTiebreakSubmitting(false);
       }
       return;
     }
-    // Se l'epoch è cambiata, Pusher ha già gestito il nuovo round: non fare nulla.
     if (tiebreakEpochRef.current !== epochAtSubmit) return;
     setTiebreakSubmitted(true);
     setTiebreakSubmitting(false);
   }
 
+  // ── Derived values ────────────────────────────────────────────────────────────
   const timerColor = timeLeft > 15 ? 'text-green-400' : timeLeft > 5 ? 'text-yellow-400' : 'text-red-400';
   const mercatoNeroWinner = winnerId ? revealedBids.find(b => b.playerId === winnerId && b.isMercatoNero) : null;
   const displayTurn = auction?.turn ?? lastTurn;
   const displayTotalTurns = auction?.totalTurns ?? lastTotalTurns;
   const myBaseCategoryName = myPlayer?.baseCategoryId ? (categoriesMap[myPlayer.baseCategoryId] ?? null) : null;
+
+  // Offerte ordinate per visualizzazione: MN in fondo, poi decrescente per importo
+  const sortedRevealedBids = [...revealedBids].sort((a, b) => {
+    if (a.isMercatoNero && !b.isMercatoNero) return 1;
+    if (!a.isMercatoNero && b.isMercatoNero) return -1;
+    return b.amount - a.amount;
+  });
+
+  // Beni della stessa categoria del bene in vendita
+  const currentGood = auction?.good ?? null;
+  const categoryGoods = currentGood
+    ? Object.values(allGoodsMap).filter(g => g.categoryId === currentGood.categoryId)
+    : [];
 
   return (
     <main className="min-h-screen bg-gray-950 text-white p-4 flex flex-col gap-4 max-w-lg mx-auto">
@@ -545,7 +558,6 @@ export default function GamePage() {
           <div className="w-full max-w-sm bg-gray-900 border border-yellow-500 rounded-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-yellow-400">⚖️ Spareggio{tiebreakRound > 1 ? ` — Round ${tiebreakRound}` : ''}</h3>
 
-            {/* Storico round precedenti */}
             {tiebreakHistory.length > 0 && (
               <div className="space-y-2">
                 {tiebreakHistory.map(entry => (
@@ -768,10 +780,66 @@ export default function GamePage() {
             <p className="text-gray-400 text-sm">In vendita</p>
             <h2 className="text-2xl font-bold">{auction.good.name}</h2>
             <p className="text-yellow-400 font-semibold">Valore base: {auction.good.baseValue} pt</p>
+            {/* Badge categoria */}
+            {categoriesMap[auction.good.categoryId] && (
+              <p className="text-xs text-gray-400">
+                Categoria: <span className="text-white font-semibold">{categoriesMap[auction.good.categoryId]}</span>
+              </p>
+            )}
             {myBaseCategoryName && auction.good.categoryId === myPlayer?.baseCategoryId && (
               <p className="text-yellow-300 text-xs">⭐ Appartiene alla tua categoria base! +10 pt extra</p>
             )}
           </div>
+
+          {/* Card categoria — tutti i beni con valore e proprietario */}
+          {categoryGoods.length > 0 && (
+            <div className="bg-gray-800 rounded-xl px-3 py-3 space-y-2">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">
+                📦 Beni della categoria · {categoriesMap[auction.good.categoryId] ?? ''}
+              </p>
+              <ul className="space-y-1">
+                {categoryGoods.map(g => {
+                  const ownerId = goodOwnerMap[g.id];
+                  const owner = ownerId ? players.find(p => p.id === ownerId) : null;
+                  const isCurrentGood = g.id === auction.good.id;
+                  const isMyBaseCategory = myPlayer?.baseCategoryId === g.categoryId;
+                  return (
+                    <li
+                      key={g.id}
+                      className={`flex items-center justify-between text-xs rounded-lg px-2 py-1.5 ${
+                        isCurrentGood
+                          ? 'bg-yellow-500/20 border border-yellow-500/50'
+                          : 'bg-gray-700/50'
+                      }`}
+                    >
+                      <span className={`font-medium ${
+                        isCurrentGood ? 'text-yellow-300' : owner ? 'text-gray-400 line-through' : 'text-gray-200'
+                      }`}>
+                        {isCurrentGood && <span className="mr-1">🔨</span>}
+                        {g.name}
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <span className={`font-bold ${
+                          isMyBaseCategory ? 'text-yellow-400' : 'text-green-400'
+                        }`}>
+                          {g.baseValue}{isMyBaseCategory ? '+10' : ''} pt
+                        </span>
+                        {owner && (
+                          <span className="text-gray-400 text-xs">
+                            {owner.id === myPlayer?.id ? '(tu)' : owner.name}
+                          </span>
+                        )}
+                        {!owner && !isCurrentGood && (
+                          <span className="text-gray-600 text-xs">—</span>
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
           <div className="text-center">
             <span className={`text-4xl font-mono font-bold ${timerColor}`}>{timeLeft}s</span>
           </div>
@@ -836,6 +904,11 @@ export default function GamePage() {
         <div className="bg-gray-900 rounded-2xl p-6 space-y-4">
           <div className="text-center space-y-1">
             <h2 className="text-xl font-bold">{auction.good.name}</h2>
+            {categoriesMap[auction.good.categoryId] && (
+              <p className="text-xs text-gray-500">
+                Categoria: <span className="text-gray-300 font-medium">{categoriesMap[auction.good.categoryId]}</span>
+              </p>
+            )}
             <p className="text-gray-400 text-sm">Risultato asta</p>
           </div>
           {winnerId ? (
@@ -853,20 +926,36 @@ export default function GamePage() {
               <p className="text-gray-400">🤝 {resultDetails}</p>
             </div>
           )}
-          <ul className="space-y-2">
-            {revealedBids.map(bid => (
-              <li key={bid.playerId} className={`flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2 ${
-                bid.playerId === winnerId ? (mercatoNeroWinner && bid.isMercatoNero ? 'border border-red-500' : 'border border-yellow-400') : ''
-              }`}>
-                <span className="font-medium">
-                  {bid.isMercatoNero && <span className="text-red-400 mr-1">🕵️</span>}
-                  {bid.playerName}
-                  {bid.isMercatoNero && <span className="text-red-400 text-xs ml-1">(MN)</span>}
-                </span>
-                <span className="font-bold">{bid.isMercatoNero ? '—' : `${bid.amount} cr`}</span>
-              </li>
-            ))}
-          </ul>
+
+          {/* Offerte in ordine decrescente */}
+          <div className="space-y-1">
+            <p className="text-xs text-gray-500 uppercase tracking-wide">Offerte</p>
+            <ul className="space-y-2">
+              {sortedRevealedBids.map((bid, idx) => (
+                <li key={bid.playerId} className={`flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2 ${
+                  bid.playerId === winnerId
+                    ? (mercatoNeroWinner && bid.isMercatoNero ? 'border border-red-500' : 'border border-yellow-400')
+                    : ''
+                }`}>
+                  <span className="flex items-center gap-2 font-medium">
+                    {/* Posizione numerica solo per offerte non-MN */}
+                    {!bid.isMercatoNero && (
+                      <span className={`text-xs font-bold w-5 text-center rounded-full ${
+                        idx === 0 ? 'text-yellow-400' : 'text-gray-600'
+                      }`}>
+                        {idx + 1}.
+                      </span>
+                    )}
+                    {bid.isMercatoNero && <span className="text-red-400">🕵️</span>}
+                    <span>{bid.playerName}</span>
+                    {bid.isMercatoNero && <span className="text-red-400 text-xs">(MN)</span>}
+                  </span>
+                  <span className="font-bold">{bid.isMercatoNero ? '—' : `${bid.amount} cr`}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
           {myPlayer?.isHost && tiedPlayerIds.length === 0 && (
             <button onClick={handleClose} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 transition">
               ➡️ Prossimo bene
