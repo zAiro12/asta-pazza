@@ -129,7 +129,6 @@ export default function GamePage() {
   const [auction, setAuction] = useState<AuctionState | null>(null);
   const [phase, setPhase] = useState<'waiting' | 'bidding' | 'revealing' | 'finished'>('waiting');
   const [categoriesMap, setCategoriesMap] = useState<Record<number, string>>({});
-  // Tutti i beni delle categorie selezionate: id → Good
   const [allGoodsMap, setAllGoodsMap] = useState<Record<number, Good>>({});
 
   const [lastTurn, setLastTurn] = useState<number | null>(null);
@@ -156,6 +155,7 @@ export default function GamePage() {
   const [showEventsBanner, setShowEventsBanner] = useState(false);
 
   const [tiedPlayerIds, setTiedPlayerIds] = useState<number[]>([]);
+  const [isMNTiebreak, setIsMNTiebreak] = useState(false);
   const [showTiebreakModal, setShowTiebreakModal] = useState(false);
   const [tiebreakAmount, setTiebreakAmount] = useState('');
   const [tiebreakSubmitting, setTiebreakSubmitting] = useState(false);
@@ -164,11 +164,9 @@ export default function GamePage() {
   const [tiebreakRound, setTiebreakRound] = useState(1);
   const [tiebreakHistory, setTiebreakHistory] = useState<TiebreakRoundEntry[]>([]);
 
-  // Guard ref per la race condition HTTP vs Pusher nello spareggio
   const tiebreakEpochRef = useRef(0);
 
   const [goodsHistory, setGoodsHistory] = useState<Record<number, HistoryEntry[]>>({});
-  // Mappa goodId → playerId (per mostrare il proprietario nella category card)
   const [goodOwnerMap, setGoodOwnerMap] = useState<Record<number, number>>({});
   const [openHistoryPlayerId, setOpenHistoryPlayerId] = useState<number | null>(null);
 
@@ -250,7 +248,6 @@ export default function GamePage() {
       if (gameData.game?.totalTurns) setLastTotalTurns(gameData.game.totalTurns);
       if (gameData.categories) setCategoriesMap(gameData.categories);
 
-      // Carica tutti i beni delle categorie selezionate
       if (gameData.goods && Array.isArray(gameData.goods)) {
         const map: Record<number, Good> = {};
         for (const g of gameData.goods as Good[]) map[g.id] = g;
@@ -282,11 +279,13 @@ export default function GamePage() {
           if (aData.auction.status === 'revealing' && aData.bids) setRevealedBids(aData.bids);
           const tiedIds: number[] = (aData.auction.tiedPlayerIds ?? []).map(Number);
           setTiedPlayerIds(tiedIds);
+          const mnTiebreak = aData.isMNTiebreak ?? false;
+          setIsMNTiebreak(mnTiebreak);
           if (aData.auction.status === 'revealing' && tiedIds.length > 0) {
             if (session?.id && tiedIds.includes(Number(session.id))) {
               setShowTiebreakModal(true);
             }
-            setResultDetails('Pareggio: spareggio in corso');
+            setResultDetails(mnTiebreak ? 'Spareggio Mercato Nero in corso' : 'Pareggio: spareggio in corso');
           }
         }
       }
@@ -319,8 +318,9 @@ export default function GamePage() {
       setPhase('bidding'); setHasBid(false); setBidAmount(''); setUseMercatoNero(false);
       setBidError(''); setRevealedBids([]); setWinnerId(null); setWinningBid(0);
       setResultDetails(''); setScugnizzuMessage(''); setConfirmedCount(0);
-      setTiedPlayerIds([]); setShowTiebreakModal(false); setTiebreakSubmitted(false);
-      setTiebreakAmount(''); setTiebreakError(''); setTiebreakRound(1); setTiebreakHistory([]);
+      setTiedPlayerIds([]); setIsMNTiebreak(false); setShowTiebreakModal(false);
+      setTiebreakSubmitted(false); setTiebreakAmount(''); setTiebreakError('');
+      setTiebreakRound(1); setTiebreakHistory([]);
       tiebreakEpochRef.current += 1;
       startTimer(data.timerSeconds);
     });
@@ -338,6 +338,7 @@ export default function GamePage() {
       winningBid: number;
       details: string;
       tiedPlayerIds?: number[];
+      isMNTiebreak?: boolean;
       players: Player[];
       goodId?: number;
       goodName?: string;
@@ -349,6 +350,8 @@ export default function GamePage() {
       setMyPlayer(prev => data.players.find(p => p.id === prev?.id) ?? prev);
       const tiedIds = (data.tiedPlayerIds ?? []).map(Number);
       setTiedPlayerIds(tiedIds);
+      const mnTiebreak = data.isMNTiebreak ?? false;
+      setIsMNTiebreak(mnTiebreak);
       const myId = sessionIdRef.current ?? loadSession(code)?.id ?? null;
 
       if (data.winnerId === null && tiedIds.length > 0 && myId !== null && tiedIds.includes(Number(myId))) {
@@ -369,13 +372,15 @@ export default function GamePage() {
         setTiebreakSubmitting(false);
         tiebreakEpochRef.current += 1;
         setShowTiebreakModal(true);
-        showToast('⚠️ Ancora pareggio! Nuovo spareggio...', 'orange');
+        const toastMsg = mnTiebreak
+          ? '🕵️ Ancora pareggio MN! Nuovo spareggio...'
+          : '⚠️ Ancora pareggio! Nuovo spareggio...';
+        showToast(toastMsg, 'orange');
       } else {
         setShowTiebreakModal(false);
       }
 
       if (data.winnerId && data.goodId) {
-        // Aggiorna mappa proprietari beni
         setGoodOwnerMap(prev => ({ ...prev, [data.goodId!]: data.winnerId! }));
       }
 
@@ -534,14 +539,13 @@ export default function GamePage() {
   const displayTotalTurns = auction?.totalTurns ?? lastTotalTurns;
   const myBaseCategoryName = myPlayer?.baseCategoryId ? (categoriesMap[myPlayer.baseCategoryId] ?? null) : null;
 
-  // Offerte ordinate per visualizzazione: MN in fondo, poi decrescente per importo
+  // Offerte ordinate: MN in fondo, poi decrescente per importo
   const sortedRevealedBids = [...revealedBids].sort((a, b) => {
     if (a.isMercatoNero && !b.isMercatoNero) return 1;
     if (!a.isMercatoNero && b.isMercatoNero) return -1;
     return b.amount - a.amount;
   });
 
-  // Beni della stessa categoria del bene in vendita
   const currentGood = auction?.good ?? null;
   const categoryGoods = currentGood
     ? Object.values(allGoodsMap).filter(g => g.categoryId === currentGood.categoryId)
@@ -556,7 +560,18 @@ export default function GamePage() {
       {showTiebreakModal && myPlayer && (
         <div className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-gray-900 border border-yellow-500 rounded-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-bold text-yellow-400">⚖️ Spareggio{tiebreakRound > 1 ? ` — Round ${tiebreakRound}` : ''}</h3>
+            <h3 className="text-lg font-bold text-yellow-400">
+              {isMNTiebreak ? '⚔️ Spareggio Mercato Nero' : '⚖️ Spareggio'}
+              {tiebreakRound > 1 ? ` — Round ${tiebreakRound}` : ''}
+            </h3>
+
+            {isMNTiebreak && (
+              <p className="text-xs text-red-300 bg-red-900/30 border border-red-700 rounded-lg px-3 py-2">
+                🕵️ Più giocatori hanno usato Mercato Nero. Chi vince lo spareggio ottiene il bene pagando
+                <strong> max(offerta più alta normale + 1, tua offerta spareggio)</strong>.
+                Chi perde <strong>mantiene</strong> il Mercato Nero per i turni futuri.
+              </p>
+            )}
 
             {tiebreakHistory.length > 0 && (
               <div className="space-y-2">
@@ -581,7 +596,7 @@ export default function GamePage() {
                 <p className="text-sm text-gray-300">
                   {tiebreakRound > 1
                     ? `Pareggio anche al round ${tiebreakRound - 1}! Inserisci una nuova offerta (max ${myPlayer.credits} crediti).`
-                    : `Sei in pareggio. Inserisci la tua offerta di spareggio (max ${myPlayer.credits} crediti).`}
+                    : `${isMNTiebreak ? 'Sei in spareggio MN.' : 'Sei in pareggio.'} Inserisci la tua offerta di spareggio (max ${myPlayer.credits} crediti).`}
                 </p>
                 <input
                   type="number"
@@ -606,7 +621,7 @@ export default function GamePage() {
                 </button>
               </>
             ) : (
-              <p className="text-sm text-gray-300">In attesa degli altri giocatori in pareggio...</p>
+              <p className="text-sm text-gray-300">In attesa degli altri giocatori in spareggio...</p>
             )}
           </div>
         </div>
@@ -780,7 +795,6 @@ export default function GamePage() {
             <p className="text-gray-400 text-sm">In vendita</p>
             <h2 className="text-2xl font-bold">{auction.good.name}</h2>
             <p className="text-yellow-400 font-semibold">Valore base: {auction.good.baseValue} pt</p>
-            {/* Badge categoria */}
             {categoriesMap[auction.good.categoryId] && (
               <p className="text-xs text-gray-400">
                 Categoria: <span className="text-white font-semibold">{categoriesMap[auction.good.categoryId]}</span>
@@ -791,7 +805,7 @@ export default function GamePage() {
             )}
           </div>
 
-          {/* Card categoria — tutti i beni con valore e proprietario */}
+          {/* Card categoria */}
           {categoryGoods.length > 0 && (
             <div className="bg-gray-800 rounded-xl px-3 py-3 space-y-2">
               <p className="text-xs text-gray-500 uppercase tracking-wide">
@@ -909,25 +923,9 @@ export default function GamePage() {
                 Categoria: <span className="text-gray-300 font-medium">{categoriesMap[auction.good.categoryId]}</span>
               </p>
             )}
-            <p className="text-gray-400 text-sm">Risultato asta</p>
           </div>
-          {winnerId ? (
-            <div className={`border rounded-xl px-4 py-3 text-center ${
-              mercatoNeroWinner ? 'bg-red-900/40 border-red-500' : 'bg-yellow-400/10 border-yellow-400'
-            }`}>
-              {mercatoNeroWinner && <p className="text-red-400 text-xs font-bold uppercase tracking-widest mb-1">🕵️ Vinto con Mercato Nero</p>}
-              <p className={`font-bold text-lg ${mercatoNeroWinner ? 'text-red-300' : 'text-yellow-400'}`}>
-                🏆 {players.find(p => p.id === winnerId)?.name ?? 'Vincitore'}
-              </p>
-              <p className="text-gray-300 text-sm">ha vinto pagando <span className="font-bold text-white">{winningBid} crediti</span></p>
-            </div>
-          ) : (
-            <div className="bg-gray-800 rounded-xl px-4 py-3 text-center">
-              <p className="text-gray-400">🤝 {resultDetails}</p>
-            </div>
-          )}
 
-          {/* Offerte in ordine decrescente */}
+          {/* Offerte PRIMA del risultato */}
           <div className="space-y-1">
             <p className="text-xs text-gray-500 uppercase tracking-wide">Offerte</p>
             <ul className="space-y-2">
@@ -938,7 +936,6 @@ export default function GamePage() {
                     : ''
                 }`}>
                   <span className="flex items-center gap-2 font-medium">
-                    {/* Posizione numerica solo per offerte non-MN */}
                     {!bid.isMercatoNero && (
                       <span className={`text-xs font-bold w-5 text-center rounded-full ${
                         idx === 0 ? 'text-yellow-400' : 'text-gray-600'
@@ -956,13 +953,32 @@ export default function GamePage() {
             </ul>
           </div>
 
+          {/* Risultato DOPO le offerte */}
+          {winnerId ? (
+            <div className={`border rounded-xl px-4 py-3 text-center ${
+              mercatoNeroWinner ? 'bg-red-900/40 border-red-500' : 'bg-yellow-400/10 border-yellow-400'
+            }`}>
+              {mercatoNeroWinner && <p className="text-red-400 text-xs font-bold uppercase tracking-widest mb-1">🕵️ Vinto con Mercato Nero</p>}
+              <p className={`font-bold text-lg ${mercatoNeroWinner ? 'text-red-300' : 'text-yellow-400'}`}>
+                🏆 {players.find(p => p.id === winnerId)?.name ?? 'Vincitore'}
+              </p>
+              <p className="text-gray-300 text-sm">ha vinto pagando <span className="font-bold text-white">{winningBid} crediti</span></p>
+            </div>
+          ) : (
+            <div className="bg-gray-800 rounded-xl px-4 py-3 text-center">
+              <p className="text-gray-400">🤝 {resultDetails}</p>
+            </div>
+          )}
+
           {myPlayer?.isHost && tiedPlayerIds.length === 0 && (
             <button onClick={handleClose} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 transition">
               ➡️ Prossimo bene
             </button>
           )}
           {winnerId === null && tiedPlayerIds.length > 0 && !tiedPlayerIds.includes(myPlayer?.id ?? -1) && (
-            <p className="text-center text-gray-400 text-sm">⚖️ Spareggio in corso tra i giocatori in pareggio...</p>
+            <p className="text-center text-gray-400 text-sm">
+              {isMNTiebreak ? '🕵️ Spareggio Mercato Nero in corso...' : '⚖️ Spareggio in corso tra i giocatori in pareggio...'}
+            </p>
           )}
           {!myPlayer?.isHost && tiedPlayerIds.length === 0 && <p className="text-center text-gray-500 text-sm">In attesa che l&apos;host continui...</p>}
         </div>

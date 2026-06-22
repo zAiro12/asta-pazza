@@ -12,6 +12,12 @@ type Ctx = { params: Promise<{ code: string }> };
 /**
  * POST /api/games/[code]/auction/tiebreak
  * Body: { playerId: number, sessionToken: string, amount: number }
+ *
+ * Gestisce sia spareggio normale che spareggio MN (isMNTiebreak).
+ * In spareggio MN:
+ *   - finalPrice = max(maxNormale + 1, offerteVincitoreSpareg)
+ *   - usedMercatoNero: true solo per il vincitore
+ *   - i perdenti MN mantengono il bonus
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
   const { code } = await params;
@@ -44,7 +50,6 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   if (!auction) return NextResponse.json({ error: 'Nessuna asta in fase revealing' }, { status: 409 });
   if (auction.winnerId) return NextResponse.json({ error: 'Asta già risolta' }, { status: 409 });
 
-  // Coerce to number[] to prevent string/number type mismatch from Neon/Drizzle
   const tiedPlayerIds = ((auction.tiedPlayerIds as unknown[]) ?? []).map(Number);
   if (tiedPlayerIds.length < 2) return NextResponse.json({ error: 'Nessuno spareggio in corso' }, { status: 409 });
   if (!tiedPlayerIds.includes(playerId)) return NextResponse.json({ error: 'Giocatore non coinvolto nello spareggio' }, { status: 403 });
@@ -87,7 +92,11 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     isMercatoNero: bid.isMercatoNero,
   }));
 
-  // Recupera i nomi dei giocatori per costruire le roundBids tipizzate
+  // Determina se siamo in uno spareggio MN: tutti i tied hanno un bid MN
+  const isMNTiebreak = tiedPlayerIds.every(tid =>
+    typedBids.some(b => b.playerId === tid && b.isMercatoNero)
+  );
+
   const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
   const playerNameMap = new Map<number, string>(allPlayers.map(p => [p.id, p.name]));
 
@@ -98,11 +107,11 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     round: b.round,
   }));
 
-  const originalByPlayer = new Map<number, number>(typedBids.map(b => [b.playerId, b.amount]));
   const topTiebreak = Math.max(...roundBids.map(b => b.amount));
   const topBidders = roundBids.filter(b => b.amount === topTiebreak);
 
   if (topBidders.length > 1) {
+    // Ancora pareggio → nuovo round, nessuno consuma MN
     const nextTied = topBidders.map(b => b.playerId);
 
     await db
@@ -130,16 +139,29 @@ export async function POST(request: NextRequest, { params }: Ctx) {
       winningBid: topTiebreak,
       details,
       tiedPlayerIds: nextTied,
+      isMNTiebreak,
       players: updatedPlayers,
     });
 
-    return NextResponse.json({ winnerId: null, winningBid: topTiebreak, details, tiedPlayerIds: nextTied, bids: typedBids, roundBids: typedRoundBids });
+    return NextResponse.json({ winnerId: null, winningBid: topTiebreak, details, tiedPlayerIds: nextTied, isMNTiebreak, bids: typedBids, roundBids: typedRoundBids });
   }
 
+  // Vincitore dello spareggio
   const winnerId = topBidders[0].playerId;
   const winnerTiebreakBid = topBidders[0].amount;
-  const winnerOriginalBid = originalByPlayer.get(winnerId) ?? 0;
-  const finalPrice = Math.max(winnerOriginalBid, winnerTiebreakBid);
+
+  let finalPrice: number;
+  if (isMNTiebreak) {
+    // Spareggio MN: paga max(maxNormale + 1, offerteVincitoreSpareg)
+    const normalBids = typedBids.filter(b => !b.isMercatoNero);
+    const maxNormal = normalBids.length > 0 ? Math.max(...normalBids.map(b => b.amount)) : 0;
+    finalPrice = Math.max(maxNormal + 1, winnerTiebreakBid);
+  } else {
+    // Spareggio normale: paga max(offerta originale, offerta spareggio)
+    const originalByPlayer = new Map<number, number>(typedBids.map(b => [b.playerId, b.amount]));
+    const winnerOriginalBid = originalByPlayer.get(winnerId) ?? 0;
+    finalPrice = Math.max(winnerOriginalBid, winnerTiebreakBid);
+  }
 
   await db
     .update(auctions)
@@ -161,9 +183,16 @@ export async function POST(request: NextRequest, { params }: Ctx) {
 
   await sql`UPDATE players SET credits = credits - ${finalPrice} WHERE id = ${winnerId}`;
 
+  // Solo il vincitore MN consuma il bonus; i perdenti MN lo mantengono
+  if (isMNTiebreak) {
+    await db.update(players).set({ usedMercatoNero: true }).where(eq(players.id, winnerId));
+  }
+
   const updatedPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
   const winnerName = updatedPlayers.find(p => p.id === winnerId)?.name ?? 'Giocatore';
-  const details = `${winnerName} vince lo spareggio pagando ${finalPrice} crediti`;
+  const details = isMNTiebreak
+    ? `${winnerName} vince lo spareggio MN pagando ${finalPrice} crediti`
+    : `${winnerName} vince lo spareggio pagando ${finalPrice} crediti`;
 
   await pusherServer.trigger(`game-${upperCode}`, 'tiebreak-resolved', {
     auctionId: auction.id,
@@ -177,8 +206,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     winningBid: finalPrice,
     details,
     tiedPlayerIds: [],
+    isMNTiebreak,
     players: updatedPlayers,
   });
 
-  return NextResponse.json({ winnerId, winningBid: finalPrice, details, tiedPlayerIds: [], bids: typedBids, roundBids: typedRoundBids });
+  return NextResponse.json({ winnerId, winningBid: finalPrice, details, tiedPlayerIds: [], isMNTiebreak, bids: typedBids, roundBids: typedRoundBids });
 }

@@ -7,25 +7,39 @@ export const SCUGNIZZU_PENALTY = 15;
 
 /**
  * Determina il vincitore di un'asta.
- * Gestisce il caso Mercato Nero: vince pagando max_altri + 1.
+ * Gestisce il caso Mercato Nero:
+ *   - 1 solo MN: vince pagando max(offerte normali) + 1.
+ *   - 2+ MN: spareggio tra tutti i giocatori MN (come pareggio normale).
  */
 export function resolveAuction(bids: Bid[], players: Player[]): {
   winnerId: number | null;
   winningBid: number;
   details: string;
   tiedPlayerIds?: number[];
+  isMNTiebreak?: boolean;
 } {
   if (bids.length === 0) return { winnerId: null, winningBid: 0, details: 'Nessuna offerta' };
 
   const mercatoNeroBids = bids.filter(b => b.isMercatoNero);
   const normalBids = bids.filter(b => !b.isMercatoNero);
 
-  if (mercatoNeroBids.length > 0) {
-    // Mercato Nero: vince pagando max(offerte normali) + 1
+  // Doppio+ MN → spareggio tra i giocatori MN
+  if (mercatoNeroBids.length > 1) {
+    return {
+      winnerId: null,
+      winningBid: 0,
+      details: `${mercatoNeroBids.length} giocatori hanno usato Mercato Nero — spareggio tra loro`,
+      tiedPlayerIds: mercatoNeroBids.map(b => b.playerId),
+      isMNTiebreak: true,
+    };
+  }
+
+  if (mercatoNeroBids.length === 1) {
+    // MN singolo: vince pagando max(offerte normali) + 1
     const maxNormal = normalBids.length > 0
       ? Math.max(...normalBids.map(b => b.amount))
       : 0;
-    const mnBid = mercatoNeroBids[0]; // al massimo 1 per partita per giocatore
+    const mnBid = mercatoNeroBids[0];
     const finalAmount = maxNormal + 1;
 
     return {
@@ -33,6 +47,7 @@ export function resolveAuction(bids: Bid[], players: Player[]): {
       winningBid: finalAmount,
       details: `Mercato Nero: ${mnBid.playerName} vince pagando ${finalAmount} (max altri: ${maxNormal})`,
       tiedPlayerIds: [],
+      isMNTiebreak: false,
     };
   }
 
@@ -46,15 +61,17 @@ export function resolveAuction(bids: Bid[], players: Player[]): {
       winningBid: maxBid,
       details: `${winners[0].playerName} vince con ${maxBid} crediti`,
       tiedPlayerIds: [],
+      isMNTiebreak: false,
     };
   }
 
-  // Pareggio: nessuno vince (bene non assegnato)
+  // Pareggio normale: nessuno vince (bene non assegnato)
   return {
     winnerId: null,
     winningBid: maxBid,
     details: `Pareggio a ${maxBid} — spareggio necessario`,
     tiedPlayerIds: winners.map(w => w.playerId),
+    isMNTiebreak: false,
   };
 }
 

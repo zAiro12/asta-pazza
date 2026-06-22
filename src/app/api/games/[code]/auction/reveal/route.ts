@@ -27,7 +27,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
 
   const caller = await validateSession(db, body.playerId, body.sessionToken, game.id);
   if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!caller.isHost) return NextResponse.json({ error: "Solo l'host pu\u00f2 rivelare le offerte" }, { status: 403 });
+  if (!caller.isHost) return NextResponse.json({ error: "Solo l'host può rivelare le offerte" }, { status: 403 });
 
   const [auction] = await db
     .select()
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const allPlayers = await db.select().from(players).where(eq(players.gameId, game.id));
   const result = resolveAuction(typedBids, allPlayers as never);
 
-  // Aggiorna asta
+  // Aggiorna asta — salva anche isMNTiebreak nei dettagli tramite tiedPlayerIds
   await db
     .update(auctions)
     .set({
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     })
     .where(eq(auctions.id, auction.id));
 
-  // Assegna bene e scala crediti al vincitore
+  // Assegna bene e scala crediti al vincitore (solo se vince subito, non in spareggio)
   if (result.winnerId) {
     await db.insert(playerGoods).values({
       playerId: result.winnerId,
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
       UPDATE players SET credits = credits - ${result.winningBid} WHERE id = ${result.winnerId}
     `;
 
-    // Se ha usato Mercato Nero, marca il flag
+    // Se ha usato Mercato Nero singolo (vince subito), marca il flag
     const mnBid = typedBids.find(b => b.isMercatoNero && b.playerId === result.winnerId);
     if (mnBid) {
       await db.update(players).set({ usedMercatoNero: true }).where(eq(players.id, result.winnerId));
@@ -103,6 +103,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     winningBid: result.winningBid,
     details: result.details,
     tiedPlayerIds: result.tiedPlayerIds ?? [],
+    isMNTiebreak: result.isMNTiebreak ?? false,
     players: updatedPlayers,
   });
 
@@ -111,6 +112,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     winningBid: result.winningBid,
     details: result.details,
     tiedPlayerIds: result.tiedPlayerIds ?? [],
+    isMNTiebreak: result.isMNTiebreak ?? false,
     bids: typedBids,
   });
 }
