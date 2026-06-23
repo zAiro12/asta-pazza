@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getPusherClient } from '@/lib/pusher-client';
+import { vibrate, unlockAudio } from '@/lib/vibration';
 import type { Bid } from '@/types/game';
 
 interface Good {
@@ -284,6 +285,7 @@ export default function GamePage() {
           if (aData.auction.status === 'revealing' && tiedIds.length > 0) {
             if (session?.id && tiedIds.includes(Number(session.id))) {
               setShowTiebreakModal(true);
+              vibrate('tiebreak-start');
             }
             setResultDetails(mnTiebreak ? 'Spareggio Mercato Nero in corso' : 'Pareggio: spareggio in corso');
           }
@@ -323,6 +325,7 @@ export default function GamePage() {
       setTiebreakRound(1); setTiebreakHistory([]);
       tiebreakEpochRef.current += 1;
       startTimer(data.timerSeconds);
+      vibrate('auction-start');
     });
 
     channel.bind('bid-confirmed', (data: { auctionId: number; confirmedCount: number; totalPlayers: number }) => {
@@ -372,6 +375,7 @@ export default function GamePage() {
         setTiebreakSubmitting(false);
         tiebreakEpochRef.current += 1;
         setShowTiebreakModal(true);
+        vibrate('tiebreak-start');
         const toastMsg = mnTiebreak
           ? '🕵️ Ancora pareggio MN! Nuovo spareggio...'
           : '⚠️ Ancora pareggio! Nuovo spareggio...';
@@ -447,6 +451,7 @@ export default function GamePage() {
   }, [code]);
 
   async function handleBid() {
+    unlockAudio();
     if (!myPlayer || !auction || !session?.sessionToken) return;
     const amount = useMercatoNero ? 0 : parseInt(bidAmount);
     if (!useMercatoNero && (isNaN(amount) || amount < 0)) { setBidError('Inserisci un importo valido'); return; }
