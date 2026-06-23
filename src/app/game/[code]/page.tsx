@@ -455,17 +455,17 @@ export default function GamePage() {
   }, [code]);
 
   // ── Auto-reveal ──────────────────────────────────────────────────────────────
-  // Scatta quando: (timer = 0 E almeno 1 offerta) OPPURE (tutti hanno offerto)
+  // Scatta SOLO quando tutti i giocatori hanno piazzato la propria offerta.
+  // Il timer a 0 da solo NON triggera il reveal.
   // Solo l'host chiama il reveal; gli altri aspettano il broadcast Pusher.
   useEffect(() => {
     if (phase !== 'bidding') return;
     if (!myPlayer?.isHost) return;
     if (autoRevealFiredRef.current) return;
 
-    const timerExpired = timeLeft === 0;
     const allIn = confirmedCount > 0 && confirmedCount >= totalPlayers;
 
-    if (timerExpired || allIn) {
+    if (allIn) {
       autoRevealFiredRef.current = true;
       const sessionNow = session ?? loadSession(code);
       if (!sessionNow?.sessionToken) return;
@@ -476,7 +476,7 @@ export default function GamePage() {
       });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeLeft, confirmedCount, totalPlayers, phase, myPlayer?.isHost]);
+  }, [confirmedCount, totalPlayers, phase, myPlayer?.isHost]);
 
   async function handleBid() {
     unlockAudio();
