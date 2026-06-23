@@ -93,6 +93,44 @@ function loadSession(code: string): SessionPlayer | null {
   } catch { return null; }
 }
 
+// ── Audio ─────────────────────────────────────────────────────────────────────
+let audioCtx: AudioContext | null = null;
+function getAudioCtx(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  if (!audioCtx) audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+  return audioCtx;
+}
+
+function playTone(freq: number, duration: number, type: OscillatorType = 'sine', gainVal = 0.18, delay = 0) {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, ctx.currentTime + delay);
+  gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+  gain.gain.linearRampToValueAtTime(gainVal, ctx.currentTime + delay + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + duration);
+  osc.start(ctx.currentTime + delay);
+  osc.stop(ctx.currentTime + delay + duration);
+}
+
+function playChime(freqs: number[], gap = 0.12) {
+  freqs.forEach((f, i) => playTone(f, 0.35, 'sine', 0.15, i * gap));
+}
+
+const sounds = {
+  auctionStart: () => playChime([523, 659, 784]),          // Do Mi Sol — gioioso
+  bidIn: () => playTone(880, 0.12, 'sine', 0.10),          // La breve — conferma
+  reveal: () => playChime([392, 494, 587, 740], 0.09),     // Sol Si Re Fa# — suspense
+  win: () => playChime([523, 659, 784, 1047], 0.10),       // Do Mi Sol Do — vittoria
+  mercatoNero: () => { playTone(220, 0.18, 'sawtooth', 0.12); playTone(196, 0.25, 'sawtooth', 0.10, 0.20); },
+  tiebreak: () => playChime([440, 415, 440], 0.15),        // La Lab La — tensione
+  complete: () => playChime([784, 880, 1047], 0.08),       // obiettivo completato
+};
+
 function Toast({ message, color = 'yellow' }: { message: string; color?: 'yellow' | 'orange' | 'red' | 'green' }) {
   const colorMap = {
     yellow: 'bg-yellow-500/90 text-gray-900',
@@ -117,6 +155,39 @@ const RARITY_LABEL: Record<string, string> = {
   rare: '🟣 Raro',
   common: '🔵 Comune',
 };
+
+// ── CSS animations (injected once) ───────────────────────────────────────────
+const ANIM_STYLES = `
+@keyframes slideUpFade {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes mnShake {
+  0%,100% { transform: translateX(0); }
+  15%     { transform: translateX(-6px) rotate(-2deg); }
+  35%     { transform: translateX(6px) rotate(2deg); }
+  55%     { transform: translateX(-4px); }
+  75%     { transform: translateX(4px); }
+}
+.bid-slide-up {
+  animation: slideUpFade 0.28s cubic-bezier(0.22,1,0.36,1) both;
+}
+.bid-mn-shake {
+  animation: slideUpFade 0.28s cubic-bezier(0.22,1,0.36,1) both,
+             mnShake 0.55s cubic-bezier(0.22,1,0.36,1) 0.25s both;
+}
+`;
+
+function InjectStyles() {
+  useEffect(() => {
+    if (document.getElementById('asta-anim-styles')) return;
+    const el = document.createElement('style');
+    el.id = 'asta-anim-styles';
+    el.textContent = ANIM_STYLES;
+    document.head.appendChild(el);
+  }, []);
+  return null;
+}
 
 export default function GamePage() {
   const params = useParams();
@@ -143,8 +214,10 @@ export default function GamePage() {
 
   const [confirmedCount, setConfirmedCount] = useState(0);
   const [totalPlayers, setTotalPlayers] = useState(0);
+  const [biddingPlayerIds, setBiddingPlayerIds] = useState<number[]>([]);
 
   const [revealedBids, setRevealedBids] = useState<(Bid & { playerName: string })[]>([]);
+  const [visibleBidCount, setVisibleBidCount] = useState(0);
   const [winnerId, setWinnerId] = useState<number | null>(null);
   const [winningBid, setWinningBid] = useState<number>(0);
   const [resultDetails, setResultDetails] = useState('');
@@ -180,7 +253,6 @@ export default function GamePage() {
   const [showObjectives, setShowObjectives] = useState(false);
   const [objectivesLoaded, setObjectivesLoaded] = useState(false);
 
-  // Ref per evitare doppi trigger dell'auto-reveal
   const autoRevealFiredRef = useRef(false);
 
   function showToast(message: string, color: 'yellow' | 'orange' | 'red' | 'green' = 'yellow') {
@@ -228,6 +300,18 @@ export default function GamePage() {
       loadObjectives(myPlayer.id, true);
     }
   }
+
+  // ── Reveal animation: mostra offerte una alla volta dal basso ─────────────
+  useEffect(() => {
+    if (revealedBids.length === 0) { setVisibleBidCount(0); return; }
+    setVisibleBidCount(0);
+    // Mostra le offerte una alla volta con stagger 120ms
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    revealedBids.forEach((_, i) => {
+      timers.push(setTimeout(() => setVisibleBidCount(i + 1), 120 * (i + 1)));
+    });
+    return () => timers.forEach(clearTimeout);
+  }, [revealedBids]);
 
   useEffect(() => {
     const session = loadSession(code);
@@ -323,6 +407,7 @@ export default function GamePage() {
       setPhase('bidding'); setHasBid(false); setBidAmount(''); setUseMercatoNero(false);
       setBidError(''); setRevealedBids([]); setWinnerId(null); setWinningBid(0);
       setResultDetails(''); setScugnizzuMessage(''); setConfirmedCount(0);
+      setBiddingPlayerIds([]);
       setTiedPlayerIds([]); setIsMNTiebreak(false); setShowTiebreakModal(false);
       setTiebreakSubmitted(false); setTiebreakAmount(''); setTiebreakError('');
       setTiebreakRound(1); setTiebreakHistory([]);
@@ -330,10 +415,14 @@ export default function GamePage() {
       autoRevealFiredRef.current = false;
       startTimer(data.timerSeconds);
       vibrate('auction-start');
+      sounds.auctionStart();
     });
 
-    channel.bind('bid-confirmed', (data: { auctionId: number; confirmedCount: number; totalPlayers: number }) => {
-      setConfirmedCount(data.confirmedCount); setTotalPlayers(data.totalPlayers);
+    channel.bind('bid-confirmed', (data: { auctionId: number; confirmedCount: number; totalPlayers: number; biddingPlayerIds?: number[] }) => {
+      setConfirmedCount(data.confirmedCount);
+      setTotalPlayers(data.totalPlayers);
+      if (data.biddingPlayerIds) setBiddingPlayerIds(data.biddingPlayerIds);
+      sounds.bidIn();
     });
 
     const handleRevealLikeEvent = (data: {
@@ -361,6 +450,12 @@ export default function GamePage() {
       setIsMNTiebreak(mnTiebreak);
       const myId = sessionIdRef.current ?? loadSession(code)?.id ?? null;
 
+      // Suoni reveal
+      const hasMN = data.bids.some(b => b.isMercatoNero);
+      if (hasMN) sounds.mercatoNero();
+      else sounds.reveal();
+      if (data.winnerId) setTimeout(() => sounds.win(), data.bids.length * 120 + 300);
+
       if (data.winnerId === null && tiedIds.length > 0 && myId !== null && tiedIds.includes(Number(myId))) {
         if (data.roundBids && data.roundBids.length > 0) {
           const completedRound = data.tiebreakRound ?? 1;
@@ -380,6 +475,7 @@ export default function GamePage() {
         tiebreakEpochRef.current += 1;
         setShowTiebreakModal(true);
         vibrate('tiebreak-start');
+        sounds.tiebreak();
         const toastMsg = mnTiebreak
           ? '🕵️ Ancora pareggio MN! Nuovo spareggio...'
           : '⚠️ Ancora pareggio! Nuovo spareggio...';
@@ -434,7 +530,7 @@ export default function GamePage() {
             setCompletedObjectiveIds(prev => {
               const newIds = myCompleted.filter(id => !prev.includes(id));
               if (newIds.length === 0) return prev;
-              newIds.forEach(() => showToast('🏆 Obiettivo completato!', 'green'));
+              newIds.forEach(() => { showToast('🏆 Obiettivo completato!', 'green'); sounds.complete(); });
               return [...prev, ...newIds];
             });
           }
@@ -455,9 +551,6 @@ export default function GamePage() {
   }, [code]);
 
   // ── Auto-reveal ──────────────────────────────────────────────────────────────
-  // Scatta SOLO quando tutti i giocatori hanno piazzato la propria offerta.
-  // Il timer a 0 da solo NON triggera il reveal.
-  // Solo l'host chiama il reveal; gli altri aspettano il broadcast Pusher.
   useEffect(() => {
     if (phase !== 'bidding') return;
     if (!myPlayer?.isHost) return;
@@ -572,12 +665,17 @@ export default function GamePage() {
   const displayTotalTurns = auction?.totalTurns ?? lastTotalTurns;
   const myBaseCategoryName = myPlayer?.baseCategoryId ? (categoriesMap[myPlayer.baseCategoryId] ?? null) : null;
 
-  // Offerte ordinate: MN in fondo, poi decrescente per importo
+  // Offerte ordinate: dal più alto al più basso, MN in fondo
   const sortedRevealedBids = [...revealedBids].sort((a, b) => {
     if (a.isMercatoNero && !b.isMercatoNero) return 1;
     if (!a.isMercatoNero && b.isMercatoNero) return -1;
     return b.amount - a.amount;
   });
+
+  // Giocatori che non hanno ancora offerto (AFK per l'host)
+  const afkPlayers = phase === 'bidding'
+    ? players.filter(p => !biddingPlayerIds.includes(p.id))
+    : [];
 
   const currentGood = auction?.good ?? null;
   const categoryGoods = currentGood
@@ -587,6 +685,7 @@ export default function GamePage() {
   return (
     <main className="min-h-screen bg-gray-950 text-white p-4 flex flex-col gap-4 max-w-lg mx-auto">
 
+      <InjectStyles />
       {toast && <Toast message={toast.message} color={toast.color} />}
 
       {/* Modal Spareggio */}
@@ -929,6 +1028,8 @@ export default function GamePage() {
               <p className="text-gray-400 text-sm">In attesa degli altri giocatori...</p>
             </div>
           )}
+
+          {/* Pannello host */}
           {myPlayer?.isHost && (
             <div className="space-y-2 mt-2">
               <div className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2">
@@ -938,6 +1039,22 @@ export default function GamePage() {
                   {confirmedCount === totalPlayers && totalPlayers > 0 && <span className="ml-2 text-green-400 text-xs">✓ tutti</span>}
                 </span>
               </div>
+
+              {/* AFK panel — giocatori che non hanno ancora offerto */}
+              {afkPlayers.length > 0 && (
+                <div className="bg-red-950/60 border border-red-700/60 rounded-xl px-3 py-2 space-y-1">
+                  <p className="text-red-400 text-xs font-semibold uppercase tracking-wide">⏳ In attesa di...</p>
+                  <ul className="space-y-0.5">
+                    {afkPlayers.map(p => (
+                      <li key={p.id} className="flex items-center gap-2 text-xs">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
+                        <span className="text-red-200">{p.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <button onClick={handleReveal} className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 transition">
                 👁 Rivela Offerte
               </button>
@@ -958,53 +1075,66 @@ export default function GamePage() {
             )}
           </div>
 
-          {/* Offerte PRIMA del risultato */}
+          {/* Offerte animate dal basso verso l'alto */}
           <div className="space-y-1">
             <p className="text-xs text-gray-500 uppercase tracking-wide">Offerte</p>
             <ul className="space-y-2">
-              {sortedRevealedBids.map((bid, idx) => (
-                <li key={bid.playerId} className={`flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2 ${
-                  bid.playerId === winnerId
-                    ? (mercatoNeroWinner && bid.isMercatoNero ? 'border border-red-500' : 'border border-yellow-400')
-                    : ''
-                }`}>
-                  <span className="flex items-center gap-2 font-medium">
-                    {!bid.isMercatoNero && (
-                      <span className={`text-xs font-bold w-5 text-center rounded-full ${
-                        idx === 0 ? 'text-yellow-400' : 'text-gray-600'
-                      }`}>
-                        {idx + 1}.
-                      </span>
-                    )}
-                    {bid.isMercatoNero && <span className="text-red-400">🕵️</span>}
-                    <span>{bid.playerName}</span>
-                    {bid.isMercatoNero && <span className="text-red-400 text-xs">(MN)</span>}
-                  </span>
-                  <span className="font-bold">{bid.isMercatoNero ? '—' : `${bid.amount} cr`}</span>
-                </li>
-              ))}
+              {sortedRevealedBids.map((bid, idx) => {
+                const isVisible = idx < visibleBidCount;
+                if (!isVisible) return null;
+                const isMN = bid.isMercatoNero;
+                return (
+                  <li
+                    key={bid.playerId}
+                    className={`flex items-center justify-between bg-gray-800 rounded-xl px-4 py-2 ${
+                      bid.playerId === winnerId
+                        ? (mercatoNeroWinner && isMN ? 'border border-red-500' : 'border border-yellow-400')
+                        : ''
+                    } ${ isMN ? 'bid-mn-shake' : 'bid-slide-up' }`}
+                    style={{ animationDelay: `${idx * 120}ms` }}
+                  >
+                    <span className="flex items-center gap-2 font-medium">
+                      {!isMN && (
+                        <span className={`text-xs font-bold w-5 text-center rounded-full ${
+                          idx === 0 ? 'text-yellow-400' : 'text-gray-600'
+                        }`}>
+                          {idx + 1}.
+                        </span>
+                      )}
+                      {isMN && <span className="text-red-400">🕵️</span>}
+                      <span>{bid.playerName}</span>
+                      {isMN && <span className="text-red-400 text-xs">(MN)</span>}
+                    </span>
+                    <span className="font-bold">{isMN ? '—' : `${bid.amount} cr`}</span>
+                  </li>
+                );
+              })}
             </ul>
           </div>
 
-          {/* Risultato DOPO le offerte */}
-          {winnerId ? (
-            <div className={`border rounded-xl px-4 py-3 text-center ${
-              mercatoNeroWinner ? 'bg-red-900/40 border-red-500' : 'bg-yellow-400/10 border-yellow-400'
-            }`}>
-              {mercatoNeroWinner && <p className="text-red-400 text-xs font-bold uppercase tracking-widest mb-1">🕵️ Vinto con Mercato Nero</p>}
-              <p className={`font-bold text-lg ${mercatoNeroWinner ? 'text-red-300' : 'text-yellow-400'}`}>
-                🏆 {players.find(p => p.id === winnerId)?.name ?? 'Vincitore'}
-              </p>
-              <p className="text-gray-300 text-sm">ha vinto pagando <span className="font-bold text-white">{winningBid} crediti</span></p>
-            </div>
-          ) : (
-            <div className="bg-gray-800 rounded-xl px-4 py-3 text-center">
-              <p className="text-gray-400">🤝 {resultDetails}</p>
-            </div>
+          {/* Risultato — appare solo dopo che tutte le offerte sono visibili */}
+          {visibleBidCount >= sortedRevealedBids.length && (
+            <>
+              {winnerId ? (
+                <div className={`border rounded-xl px-4 py-3 text-center bid-slide-up ${
+                  mercatoNeroWinner ? 'bg-red-900/40 border-red-500' : 'bg-yellow-400/10 border-yellow-400'
+                }`}>
+                  {mercatoNeroWinner && <p className="text-red-400 text-xs font-bold uppercase tracking-widest mb-1">🕵️ Vinto con Mercato Nero</p>}
+                  <p className={`font-bold text-lg ${mercatoNeroWinner ? 'text-red-300' : 'text-yellow-400'}`}>
+                    🏆 {players.find(p => p.id === winnerId)?.name ?? 'Vincitore'}
+                  </p>
+                  <p className="text-gray-300 text-sm">ha vinto pagando <span className="font-bold text-white">{winningBid} crediti</span></p>
+                </div>
+              ) : (
+                <div className="bg-gray-800 rounded-xl px-4 py-3 text-center bid-slide-up">
+                  <p className="text-gray-400">🤝 {resultDetails}</p>
+                </div>
+              )}
+            </>
           )}
 
-          {myPlayer?.isHost && tiedPlayerIds.length === 0 && (
-            <button onClick={handleClose} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 transition">
+          {myPlayer?.isHost && tiedPlayerIds.length === 0 && visibleBidCount >= sortedRevealedBids.length && (
+            <button onClick={handleClose} className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-400 transition bid-slide-up">
               ➡️ Prossimo bene
             </button>
           )}
