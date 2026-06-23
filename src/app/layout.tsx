@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { SpeedInsights } from "@vercel/speed-insights/next"
 import './globals.css';
 
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? '';
@@ -65,6 +66,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         `}} />
       </head>
       <body className="bg-dark-bg text-white min-h-screen">
+        <SpeedInsights/>
         {children}
       </body>
     </html>
