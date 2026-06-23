@@ -72,11 +72,15 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const totalPlayers = allPlayers.length;
   const confirmedCount = allBids.length;
 
-  // Broadcast bid-confirmed a tutti (solo contatore, nessun dato riservato)
+  // IDs dei giocatori che hanno già offerto (per AFK detection lato host)
+  const biddingPlayerIds = allBids.map(b => b.playerId);
+
+  // Broadcast bid-confirmed a tutti (solo contatore + chi ha già offerto, nessun importo)
   await pusherServer.trigger(`game-${upperCode}`, 'bid-confirmed', {
     auctionId: auction.id,
     confirmedCount,
     totalPlayers,
+    biddingPlayerIds,
   });
 
   // Notifica globale se è Mercato Nero
