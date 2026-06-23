@@ -180,6 +180,9 @@ export default function GamePage() {
   const [showObjectives, setShowObjectives] = useState(false);
   const [objectivesLoaded, setObjectivesLoaded] = useState(false);
 
+  // Ref per evitare doppi trigger dell'auto-reveal
+  const autoRevealFiredRef = useRef(false);
+
   function showToast(message: string, color: 'yellow' | 'orange' | 'red' | 'green' = 'yellow') {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ message, color });
@@ -324,6 +327,7 @@ export default function GamePage() {
       setTiebreakSubmitted(false); setTiebreakAmount(''); setTiebreakError('');
       setTiebreakRound(1); setTiebreakHistory([]);
       tiebreakEpochRef.current += 1;
+      autoRevealFiredRef.current = false;
       startTimer(data.timerSeconds);
       vibrate('auction-start');
     });
@@ -449,6 +453,30 @@ export default function GamePage() {
     return () => { channel.unbind_all(); pusher.unsubscribe(`game-${code}`); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
+
+  // ── Auto-reveal ──────────────────────────────────────────────────────────────
+  // Scatta quando: (timer = 0 E almeno 1 offerta) OPPURE (tutti hanno offerto)
+  // Solo l'host chiama il reveal; gli altri aspettano il broadcast Pusher.
+  useEffect(() => {
+    if (phase !== 'bidding') return;
+    if (!myPlayer?.isHost) return;
+    if (autoRevealFiredRef.current) return;
+
+    const timerExpired = timeLeft === 0;
+    const allIn = confirmedCount > 0 && confirmedCount >= totalPlayers;
+
+    if (timerExpired || allIn) {
+      autoRevealFiredRef.current = true;
+      const sessionNow = session ?? loadSession(code);
+      if (!sessionNow?.sessionToken) return;
+      fetch(`/api/games/${code}/auction/reveal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId: myPlayer.id, sessionToken: sessionNow.sessionToken }),
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeLeft, confirmedCount, totalPlayers, phase, myPlayer?.isHost]);
 
   async function handleBid() {
     unlockAudio();
