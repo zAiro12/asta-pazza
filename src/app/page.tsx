@@ -126,6 +126,21 @@ export default function Home() {
           </button>
         </div>
       )}
+
+      <footer className="absolute bottom-4 w-full text-center text-xs text-slate-600 space-y-0.5">
+        <p>
+          © {new Date().getFullYear()} Asta Pazza —{' '}
+          <a
+            href="https://lucaairo.it"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-slate-500 hover:text-amber-400 transition"
+          >
+            zAiro
+          </a>
+        </p>
+        <p className="text-slate-700">v{process.env.NEXT_PUBLIC_APP_VERSION}</p>
+      </footer>
     </main>
   );
 }
