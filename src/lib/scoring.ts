@@ -89,14 +89,14 @@ export function calculateScore(
   );
   const collections = calculateCollections(mergedPlayerCats, mergedOtherPlayerCats, activeEvents);
 
-  // --- Crediti residui ---
+  // --- Crediti residui (massimo 20 punti) ---
   let creditsMultiplier = 1;
   for (const event of activeEvents) {
     const effect = event.effect as EventEffect;
     if (effect.type === 'credits_multiplier') creditsMultiplier = effect.multiplier;
   }
   const creditsFrozen = activeEvents.some(e => (e.effect as any).type === 'credits_freeze');
-  let residualCredits = creditsFrozen ? 0 : Math.floor(player.credits * creditsMultiplier);
+  let residualCredits = creditsFrozen ? 0 : Math.min(Math.floor(player.credits * creditsMultiplier), 20);
 
   for (const event of activeEvents) {
     const effect = event.effect as EventEffect;
