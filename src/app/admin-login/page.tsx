@@ -1,29 +1,14 @@
 'use client';
-import { signIn, useSession } from 'next-auth/react';
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { signIn } from 'next-auth/react';
+import { useState } from 'react';
 
 export default function AdminLoginPage() {
   const [loading, setLoading] = useState<string | null>(null);
-  const { status } = useSession();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (status === 'authenticated') router.replace('/admin');
-  }, [status, router]);
 
   const handleSignIn = async (provider: string) => {
     setLoading(provider);
     await signIn(provider, { callbackUrl: '/admin' });
   };
-
-  if (status === 'loading' || status === 'authenticated') {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400 text-sm">Caricamento…</div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center">
