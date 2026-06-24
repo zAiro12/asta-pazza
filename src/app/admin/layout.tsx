@@ -7,7 +7,7 @@ export const metadata = { title: 'Admin Panel' };
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
-  if (!session) redirect('/admin/login');
+  if (!session) redirect('/admin-login');
 
   return (
     <SessionProvider session={session}>
