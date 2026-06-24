@@ -12,7 +12,7 @@ type Ctx = { params: Promise<{ code: string }> };
 
 function getDb() {
   const sql = neon(process.env.DATABASE_URL!);
-  return { db: drizzle(sql), sql };
+  return { db: drizzle({ client: sql }), sql };
 }
 
 /**

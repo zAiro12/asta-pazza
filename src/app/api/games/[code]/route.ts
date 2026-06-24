@@ -12,7 +12,7 @@ type Ctx = { params: Promise<{ code: string }> };
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const sql = neon(process.env.DATABASE_URL!);
-  const db = drizzle(sql);
+  const db = drizzle({ client: sql });
 
   const [game] = await db.select().from(games).where(eq(games.code, code.toUpperCase()));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
@@ -42,7 +42,7 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
   }
 
   const sql = neon(process.env.DATABASE_URL!);
-  const db = drizzle(sql);
+  const db = drizzle({ client: sql });
 
   const updateFields: Record<string, unknown> = { status: body.status };
   if (body.selectedCategoryIds !== undefined) updateFields.selectedCategoryIds = body.selectedCategoryIds;
@@ -159,7 +159,7 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
 export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const { code } = await params;
   const sql = neon(process.env.DATABASE_URL!);
-  const db = drizzle(sql);
+  const db = drizzle({ client: sql });
 
   const [game] = await db.select().from(games).where(eq(games.code, code.toUpperCase()));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });

@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   }
 
   const sql = neon(process.env.DATABASE_URL!);
-  const db = drizzle(sql);
+  const db = drizzle({ client: sql });
 
   let code = generateCode();
   for (let i = 0; i < 10; i++) {

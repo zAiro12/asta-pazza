@@ -54,7 +54,7 @@ export async function GET(request: NextRequest, { params }: Ctx) {
   const { searchParams } = new URL(request.url);
   const playerId = searchParams.get('playerId') ? Number(searchParams.get('playerId')) : null;
 
-  const db = drizzle(neon(process.env.DATABASE_URL!));
+  const db = drizzle(process.env.DATABASE_URL!);
 
   const [game] = await db.select().from(games).where(eq(games.code, code.toUpperCase()));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });

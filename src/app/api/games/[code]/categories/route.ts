@@ -35,7 +35,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   }
 
   const sql = neon(process.env.DATABASE_URL!);
-  const db = drizzle(sql);
+  const db = drizzle({ client: sql });
 
   // Carica partita
   const [game] = await db.select().from(games).where(eq(games.code, upperCode));
@@ -103,7 +103,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const upperCode = code.toUpperCase();
 
   const sql = neon(process.env.DATABASE_URL!);
-  const db = drizzle(sql);
+  const db = drizzle({ client: sql });
 
   const [game] = await db.select().from(games).where(eq(games.code, upperCode));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });

@@ -20,7 +20,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const upperCode = code.toUpperCase();
   const body = await request.json();
   const sqlClient = neon(process.env.DATABASE_URL!);
-  const db = drizzle(sqlClient);
+  const db = drizzle({ client: sqlClient });
 
   const [game] = await db.select().from(games).where(eq(games.code, upperCode));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });

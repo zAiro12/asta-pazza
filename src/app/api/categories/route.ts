@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 
 export async function GET() {
   const sql = neon(process.env.DATABASE_URL!);
-  const db = drizzle(sql);
+  const db = drizzle({ client: sql });
 
   // Carica categorie con conteggio beni per ciascuna
   const cats = await db.select().from(categories).orderBy(categories.name);

@@ -13,7 +13,7 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const playerId = parseInt(id);
 
   const sql = neon(process.env.DATABASE_URL!);
-  const db = drizzle(sql);
+  const db = drizzle({ client: sql });
 
   const [player] = await db.select().from(players).where(eq(players.id, playerId));
   if (!player) return NextResponse.json({ error: 'Giocatore non trovato' }, { status: 404 });

@@ -27,7 +27,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   if (!playerId) return NextResponse.json({ error: 'playerId obbligatorio' }, { status: 400 });
 
   const sql = neon(process.env.DATABASE_URL!);
-  const db = drizzle(sql);
+  const db = drizzle({ client: sql });
 
   const [game] = await db.select().from(games).where(eq(games.code, upperCode));
   if (!game) return NextResponse.json({ error: 'Partita non trovata' }, { status: 404 });
