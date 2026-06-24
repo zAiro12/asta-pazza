@@ -68,7 +68,7 @@ export default function AdminPage() {
   const showToast = (msg: string, type: "ok" | "err" = "ok") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
-  }, []);
+  };
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col">
@@ -200,9 +200,11 @@ function useApi<T>(url: string, deps: unknown[] = []) {
 function SectionHeader({
   title,
   subtitle,
+  action,
 }: {
   title: string;
   subtitle?: string;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="mb-6 flex items-start justify-between gap-4">
@@ -215,7 +217,12 @@ function SectionHeader({
   );
 }
 function EmptyState({ message }: { message: string }) {
-  return <div className="text-center py-12 text-slate-500"><div className="text-4xl mb-3">📭</div><p>{message}</p></div>;
+  return (
+    <div className="text-center py-12 text-slate-500">
+      <div className="text-4xl mb-3">📭</div>
+      <p>{message}</p>
+    </div>
+  );
 }
 
 function Modal({

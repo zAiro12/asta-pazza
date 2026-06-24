@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { neon } from '@neondatabase/serverless';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '../../../auth/[...nextauth]/route';
+import { authOptions } from '@/lib/auth';
 
 async function requireAdmin() {
   const session = await getServerSession(authOptions);
@@ -11,10 +11,10 @@ async function requireAdmin() {
   return rows.length > 0 || session.user.email === 'lucaairoldi92@gmail.com';
 }
 
-export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!await requireAdmin()) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const sql = neon(process.env.DATABASE_URL!);
-  const id = params.id;
+  const id = (await params).id;
   // Cancella in cascata
   await sql`DELETE FROM tiebreak_bids WHERE auction_id IN (SELECT id FROM auctions WHERE game_id=${id})`;
   await sql`DELETE FROM bids WHERE auction_id IN (SELECT id FROM auctions WHERE game_id=${id})`;
@@ -28,10 +28,10 @@ export async function DELETE(_: NextRequest, { params }: { params: { id: string 
   return NextResponse.json({ ok: true });
 }
 
-export async function PATCH(_: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!await requireAdmin()) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const sql = neon(process.env.DATABASE_URL!);
   // Forza chiusura della partita
-  await sql`UPDATE games SET status='finished', finished_at=NOW() WHERE id=${params.id}`;
+  await sql`UPDATE games SET status='finished', finished_at=NOW() WHERE id=${(await params).id}`;
   return NextResponse.json({ ok: true });
 }
