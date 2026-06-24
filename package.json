@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
+    "@vercel/speed-insights": "^1.2.0",
     "drizzle-orm": "^0.43.1",
     "next": "15.3.2",
     "pusher": "^5.2.0",
