@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
@@ -77,6 +78,7 @@ export default function RootLayout({
         />
       </head>
       <body className="bg-dark-bg text-white min-h-screen">
+        <Analytics />
         <SpeedInsights />
         {children}
       </body>
